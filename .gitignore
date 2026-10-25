@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Данные и результаты экспериментов (воспроизводятся кодом)
+data/*
+!data/.gitkeep
+results/figures/*
+!results/figures/.gitkeep
+results/*.csv
+
+# IDE / OS
+.idea/
+.DS_Store
