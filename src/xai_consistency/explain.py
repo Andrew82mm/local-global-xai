@@ -224,6 +224,34 @@ def shap_values(model, model_name, Z_background, Z_explain, split, grids=None):
                        seconds=time.perf_counter() - t0)
 
 
+def exact_interventional_shap(model, x, background):
+    """Точные интервенционные значения Шепли перебором всех 2^d коалиций.
+
+    v(S) = среднее по фону от f(x_S, z_{−S}). Нужно для проверки TreeExplainer,
+    применимо при d ≤ 12 (2^d · len(background) прогнозов на объект).
+    """
+    from itertools import product
+    from math import factorial
+
+    x = np.asarray(x, float)
+    bg = np.asarray(background, float)
+    d = len(x)
+    masks = np.array(list(product([0, 1], repeat=d)), dtype=bool)
+    big = np.where(masks[:, None, :], x[None, None, :], bg[None, :, :])
+    v = model.predict(big.reshape(-1, d)).reshape(len(masks), len(bg)).mean(axis=1)
+    code = masks @ (1 << np.arange(d))  # номер коалиции как битовая маска
+    pos = np.empty(1 << d, dtype=int)
+    pos[code] = np.arange(len(masks))
+    weight = np.array([factorial(k) * factorial(d - k - 1) / factorial(d) for k in range(d)])
+    phi = np.zeros(d)
+    for j in range(d):
+        without = ~masks[:, j]
+        sizes = masks[without].sum(axis=1)
+        gain = v[pos[code[without] | (1 << j)]] - v[without]
+        phi[j] = np.sum(weight[sizes] * gain)
+    return phi
+
+
 def _spearman_sign(x, v):
     if np.std(x) == 0 or np.std(v) == 0:
         return 0

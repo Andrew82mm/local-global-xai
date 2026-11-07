@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 from sklearn.linear_model import LinearRegression
 
 from xai_consistency import explain as E
@@ -66,3 +67,30 @@ def test_fit_and_explain_format():
     imp = res.importances()
     assert imp.shape == (10, 7) and list(imp.index) == list(d.X.columns)
     assert res[("shap", "test")].local.shape == (20, 10)
+
+
+@pytest.mark.parametrize("model_name", ["rf", "hgb"])
+def test_tree_shap_matches_exact_enumeration(model_name):
+    """Интервенционный TreeExplainer = точный перебор коалиций (в т.ч. при взаимодействии)."""
+    d = make_synthetic("interaction", n=600, r2=0.5, n_features=6, seed=1)
+    pipe = make_pipeline(model_name, other_cols=list(d.X.columns), random_state=0)
+    Z_train, Z_test = fit_transform(pipe, d.X.iloc[:500], d.y[:500], d.X.iloc[500:])
+    model = pipe.named_steps["model"]
+    bg = Z_train.iloc[:40]
+    sh = E.shap_values(model, model_name, bg, Z_test.iloc[:8], "test")
+    exact = np.array([E.exact_interventional_shap(model, x, bg) for x in Z_test.iloc[:8].to_numpy()])
+    assert np.abs(sh.local.to_numpy() - exact).max() < 1e-6
+
+
+def test_exact_shap_on_product():
+    """f = a·b с фоном нулевого среднего: каждому признаку половина произведения."""
+    class Prod:
+        def predict(self, Z):
+            return Z[:, 0] * Z[:, 1]
+
+    rng = np.random.default_rng(0)
+    bg = rng.normal(size=(400, 3))
+    bg -= bg.mean(axis=0)
+    phi = E.exact_interventional_shap(Prod(), np.array([2.0, 3.0, 5.0]), bg)
+    # Центрированный фон: v(∅) = E[ab] ≈ 0, v({a}) = a·E b = 0, v({a,b}) = ab, поэтому φ_a = ½(ab − E[ab]) ≈ 3
+    assert np.allclose(phi[:2], 3.0, atol=0.15) and abs(phi[2]) < 1e-12
