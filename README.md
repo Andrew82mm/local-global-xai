@@ -46,10 +46,8 @@ docs/                      литература, исследование дан
 ## Тесты
 
 ```bash
-uv run python tests/run_tests.py
+uv run pytest
 ```
-
-Тесты написаны в стиле pytest, поэтому при установленном pytest работает и `uv run pytest tests`.
 
 ## План работы
 

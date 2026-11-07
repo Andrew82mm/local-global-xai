@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from xai_consistency import metrics as M
 
@@ -12,10 +13,10 @@ def s(values):
 
 def test_rank_agreement():
     a = s([5, 4, 3, 2, 1])
-    assert np.isclose(M.rank_agreement(a, a * 10)["spearman"], 1)
-    assert np.isclose(M.rank_agreement(a, -a)["kendall"], -1)
+    assert M.rank_agreement(a, a * 10)["spearman"] == pytest.approx(1)
+    assert M.rank_agreement(a, -a)["kendall"] == pytest.approx(-1)
     # шкала не важна, важен только порядок
-    assert np.isclose(M.rank_agreement(a, np.exp(a))["spearman"], 1)
+    assert M.rank_agreement(a, np.exp(a))["spearman"] == pytest.approx(1)
     assert np.isnan(M.rank_agreement(a, s([1, 1, 1, 1, 1]))["spearman"])
 
 

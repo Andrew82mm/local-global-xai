@@ -1,5 +1,5 @@
 import numpy as np
-import pytest_compat as pc
+import pytest
 
 from xai_consistency.synthetic import R2_LEVELS, SCENARIOS, make_synthetic
 
@@ -61,7 +61,9 @@ def test_reproducible_and_seed_dependent():
     assert np.array_equal(a.y, b.y) and not np.array_equal(a.y, c.y)
 
 
-def test_bad_arguments():
-    pc.raises(ValueError, make_synthetic, "unknown")
-    pc.raises(ValueError, make_synthetic, "independent", r2=1.5)
-    pc.raises(ValueError, make_synthetic, "correlated", n_features=6)
+@pytest.mark.parametrize("kwargs", [{"scenario": "unknown"},
+                                    {"scenario": "independent", "r2": 1.5},
+                                    {"scenario": "correlated", "n_features": 6}])
+def test_bad_arguments(kwargs):
+    with pytest.raises(ValueError):
+        make_synthetic(**kwargs)

@@ -15,3 +15,12 @@ dependencies = [
     "seaborn>=0.13.2",
     "shap>=0.54.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
