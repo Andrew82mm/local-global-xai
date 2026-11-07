@@ -8,13 +8,14 @@
 # - сценарии: independent, correlated (ρ = 0.5 и 0.9), interaction (x1·x2), nonlinear;
 # - R² = 0.5, 0.2, 0.08, 0.02, 0 (доля дисперсии сигнала в генеральной совокупности);
 # - модели Ridge, RF, HGB; n = 1000 (800 обучение, 200 тест), 10 признаков, 4 истинных;
-# - 10 повторов: в каждом новая выборка, разбиение и seed модели.
+# - повторы (новая выборка, разбиение и seed модели): 10 при R² 0.5 и 0.2,
+#   30 при R² 0.08, 0.02 и 0, где доли близки к 0.5 и нужна точность.
 #
-# Всего 750 прогонов «обучить модель + все пять методов». Сырые результаты
+# Всего 1650 прогонов «обучить модель + все пять методов». Сырые результаты
 # сохраняются в `results/e1_*.csv`, повторный запуск берёт их из кеша
 # (пересчёт: удалить файлы или `E1_RECOMPUTE=1`).
 #
-# Запуск: `uv run python notebooks/06_e1_synthetic.py` (около 15 минут без кеша).
+# Запуск: `uv run python notebooks/06_e1_synthetic.py` (около 40 минут без кеша).
 
 # %%
 import os
@@ -48,7 +49,9 @@ pd.set_option("display.width", 220, "display.max_columns", 40, "display.max_rows
 N = 1000
 TEST_SIZE = 0.2
 SMOKE = os.environ.get("E1_SMOKE") == "1"  # быстрая проба кода: 1 повтор, отдельный кеш
-N_SEEDS = 1 if SMOKE else 10
+# Повторов на уровень R². На слабом сигнале доли «все найдены» близки к 0.5, и
+# при 10 повторах их SE около 0.16, поэтому там 30 повторов (SE около 0.09)
+N_SEEDS = {r2: 1 for r2 in R2_LEVELS} if SMOKE else {0.5: 10, 0.2: 10, 0.08: 30, 0.02: 30, 0.0: 30}
 N_JOBS = min(6, os.cpu_count() or 1)
 RESULTS = ROOT / "results"
 FIGURES = RESULTS / "figures"
@@ -152,26 +155,32 @@ def run_one(scenario, rho, r2, model_name, seed):
 # ## 2. Все прогоны (или кеш)
 
 # %%
-recompute = os.environ.get("E1_RECOMPUTE") == "1" or not all(p.exists() for p in CACHE.values())
-if recompute:
-    jobs = [(sc, rho, r2, m, seed) for sc, rho in CONFIGS for r2 in R2_LEVELS for m in MODELS
-            for seed in range(N_SEEDS)]
+# Кеш дописывается: считаются только прогоны, которых в нём ещё нет
+all_jobs = [(sc, rho, r2, m, seed) for sc, rho in CONFIGS for r2 in R2_LEVELS for m in MODELS
+            for seed in range(N_SEEDS[r2])]
+cached = os.environ.get("E1_RECOMPUTE") != "1" and all(p.exists() for p in CACHE.values())
+tables = {k: pd.read_csv(p) for k, p in CACHE.items()} if cached else {}
+done = set()
+if cached:
+    done = set(tables["runs"][["scenario", "r2", "model", "seed"]].itertuples(index=False, name=None))
+jobs = [j for j in all_jobs if (LABELS[(j[0], j[1])], j[2], j[3], j[4]) not in done]
+print(f"Прогонов в плане: {len(all_jobs)}, в кеше: {len(all_jobs) - len(jobs)}, считаем: {len(jobs)}")
+if jobs:
     # RF самый медленный: ставим его первым, чтобы процессы не простаивали в конце
     jobs.sort(key=lambda j: {"rf": 0, "hgb": 1, "ridge": 2}[j[3]])
     t0 = time.perf_counter()
     out = Parallel(n_jobs=N_JOBS, verbose=0)(delayed(run_one)(*j) for j in jobs)
     print(f"{len(jobs)} прогонов за {(time.perf_counter() - t0) / 60:.1f} мин на {N_JOBS} процессах")
-    tables = {
+    new_tables = {
         "methods": pd.DataFrame([r for o in out for r in o[0]]),
         "pairs": pd.DataFrame([r for o in out for r in o[1]]),
         "curves": pd.DataFrame([r for o in out for r in o[2]]),
         "runs": pd.DataFrame([o[3] for o in out]),
     }
-    for k, df in tables.items():
-        df.to_csv(CACHE[k], index=False)
-else:
-    tables = {k: pd.read_csv(p) for k, p in CACHE.items()}
-    print("Загружено из кеша:", {k: len(v) for k, v in tables.items()})
+    for k, df in new_tables.items():
+        tables[k] = pd.concat([tables[k], df], ignore_index=True) if k in tables else df
+        tables[k].to_csv(CACHE[k], index=False)
+print("Строк в таблицах:", {k: len(v) for k, v in tables.items()})
 methods, pairs, curves, runs = (tables[k] for k in ("methods", "pairs", "curves", "runs"))
 print("Среднее время прогона, с:", runs.groupby("model")["seconds"].mean().round(1).to_dict())
 
@@ -396,15 +405,16 @@ print(runs.groupby(["scenario", "model", "r2"])[lg_cols].mean().unstack("r2").re
 #
 # 1. **Порог обнаружения около R² = 0.08–0.2.** При R² ≥ 0.2 методы обычно находят
 #    все истинные признаки. При 0.08 (уровень `extra`) полный набор находится лишь в
-#    30–80% повторов, при 0.02 — в 0–30% (recall@4 0.52–0.78 при случайном 0.4).
+#    17–70% повторов, при 0.02 — в 0–23% (recall@4 0.55–0.74 при случайном 0.4).
 # 2. **Две группы методов.** SHAP, LIME, PDP и ALE согласны между собой даже при
 #    R² = 0 (ρ ≈ 0.8 у деревьев), потому что описывают одну модель вместе с подгонкой
-#    под шум. PI на тесте с ними не согласен при отсутствии сигнала (ρ ≈ 0.1). Согласие
+#    под шум. PI на тесте с ними не согласен при отсутствии сигнала (ρ ≈ 0.03). Согласие
 #    методов не доказывает, что сигнал есть.
-# 3. **Знаки** находятся надёжнее всего (≥ 0.88 уже при R² = 0.02).
+# 3. **Знаки** находятся надёжнее всего (≥ 0.86 уже при R² = 0.02).
 # 4. **Кривые** PDP, ALE и SHAP почти совпадают друг с другом, в том числе у шумовых
 #    признаков. PDP и ALE **не** разошлись при ρ = 0.9: истина аддитивна (гипотеза,
 #    проверить в E4).
 # 5. **Провалы модели** (Ridge и x², x1·x2; RF и двойники при ρ = 0.9) одинаково
 #    «проваливают» все методы.
-# 6. **Взаимодействие** лучше всех находит PI, механизм в ноутбуке 05.
+# 6. **Взаимодействие** лучше всех находит PI, механизм в ноутбуке 05. В аддитивных
+#    сценариях при R² = 0.08, наоборот, PI хуже SHAP и LIME (во всех 8 сочетаниях).
