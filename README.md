@@ -24,14 +24,32 @@ uv run python notebooks/01_first_look.py
 ## Структура
 
 ```
-notebooks/             эксперименты, по порядку
-  01_first_look.py       все пять методов на California Housing
-  02_interaction_toy.py  пример расхождения из-за взаимодействия признаков
-src/xai_consistency/   общий код (данные, модели, метрики), выносится сюда по мере роста
-data/                  локальные данные (не в git)
-results/figures/       графики для текста работы (не в git)
-docs/                  литература и заметки
+notebooks/                 эксперименты, по порядку
+  01_first_look.py           все пять методов на California Housing
+  02_interaction_toy.py      пример расхождения из-за взаимодействия признаков
+  03_data_exploration.py     исследование реальных данных
+  04_framework_check.py      проверка общего кода на синтетике, время методов
+src/xai_consistency/       общий код
+  data.py                    кеш реальных данных и 34 признака
+  synthetic.py               синтетика с известной истиной
+  models.py                  Pipeline и модели Ridge, RF, HGB
+  explain.py                 PI, PDP, ALE, SHAP, LIME в едином формате, нулевой эталон
+  metrics.py                 метрики согласованности
+tests/                     тесты генераторов, метрик и методов
+data/                      локальные данные (не в git)
+results/                   таблицы и графики (не в git)
+docs/                      литература, исследование данных, методика
 ```
+
+Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
+
+## Тесты
+
+```bash
+uv run python tests/run_tests.py
+```
+
+Тесты написаны в стиле pytest, поэтому при установленном pytest работает и `uv run pytest tests`.
 
 ## План работы
 
