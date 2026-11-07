@@ -29,6 +29,8 @@ notebooks/                 эксперименты, по порядку
   02_interaction_toy.py      пример расхождения из-за взаимодействия признаков
   03_data_exploration.py     исследование реальных данных
   04_framework_check.py      проверка общего кода на синтетике, время методов
+  05_hgb_interaction.py      разбор: почему PI видит x1·x2 у бустинга, а SHAP нет
+  06_e1_synthetic.py         E1: синтетика при разном уровне сигнала
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
@@ -42,6 +44,7 @@ docs/                      литература, исследование дан
 ```
 
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
+Результаты E1: [docs/e1_results.md](docs/e1_results.md).
 
 ## Тесты
 
