@@ -14,3 +14,6 @@ results/*.csv
 # IDE / OS
 .idea/
 .DS_Store
+
+# Личный план работы
+docs/plan.md
