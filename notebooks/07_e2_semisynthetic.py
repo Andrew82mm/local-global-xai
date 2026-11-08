@@ -370,6 +370,239 @@ print("\nЛокальное: медиана по объектам ρ(|SHAP|, PI)
 print(runs.groupby(["model", "r2"])[cols].mean().round(2))
 
 # %% [markdown]
+# ## 10. Дополнение: локальные объяснения и аддитивная замена взаимодействия
+#
+# Добавлено после первого разбора результатов (правки к выводам 4 и 8).
+# Пересчитываются только SHAP, PDP и ALE. С тем же seed `fit_and_explain` даёт те же
+# разбиение, модель, объясняемые объекты и фон, поэтому SHAP совпадают с основными
+# прогонами (проверка: ρ по всем 34 признакам равна сохранённой `shap_vs_true_obj_rho`).
+#
+# **Локальное (вывод 8).** У 28 шумовых признаков истинный |φ| = 0, это сплошные связи,
+# и ρ по 34 признакам в основном показывает, подняты ли 6 истинных над шумом. Поэтому
+# по каждому объекту отдельно считаем:
+# - ρ только по 6 истинным признакам;
+# - пересечение top-3 модели и истины по всем 34 признакам и долю истинных в top-6 модели;
+# - базовую линию «глобальный порядок»: та же ρ по 6 истинным, но вместо |SHAP| объекта
+#   берётся средний |SHAP| модели (одинаковый для всех объектов). Если локальные объяснения
+#   несут информацию об объекте сверх глобального порядка, их ρ должна быть выше.
+#
+# **Аддитивная замена (вывод 4, гипотеза).** Для стандартных нормальных z_a, z_b с
+# корреляцией ρ лучшая аддитивная проекция z_a·z_b — это a·(z_a² + z_b²) + const,
+# a = ρ/(1+ρ²). Главный эффект ALE истины ½ρ(z_a² − 1), отношение 2/(1+ρ²). Признаки
+# не нормальные, поэтому проекцию считаем численно: HGB с `interaction_cst` (каждое
+# дерево по одному признаку) на самой f без шума, на всех 1000 строках. Проверяем:
+# (а) кривые моделей ближе к проекции, чем к ALE истины;
+# (б) прогнозы обычной модели почти аддитивны по паре photos × wall_posts:
+#     H² Фридмана, доля дисперсии прогноза от взаимодействия пары, у HGB ещё и сравнение
+#     с аддитивной HGB на тех же данных.
+
+# %%
+from sklearn.ensemble import HistGradientBoostingRegressor  # noqa: E402
+
+from xai_consistency.models import make_model  # noqa: E402
+from xai_consistency.semisynthetic import fold_affine  # noqa: E402
+
+CACHE_ADD = {k: RESULTS / f"e2{'_smoke' if SMOKE else ''}_{k}.csv" for k in ("local", "projection")}
+FEATURE_ORDER = list(X.columns)
+T_FILLED = T_FULL.fillna(T_FULL.median())  # пропуски только у gifts и views, в f их нет
+
+
+def additive_hgb(**kw):
+    """HGB без взаимодействий: каждое дерево строится по одному признаку."""
+    p = {"max_iter": 3000, "learning_rate": 0.05, "max_depth": 3, "min_samples_leaf": 20,
+         "early_stopping": False, "random_state": 0, **kw}
+    return HistGradientBoostingRegressor(**p)
+
+
+def fit_projection(features, target):
+    m = additive_hgb(interaction_cst=[[i] for i in range(len(features))])
+    m.fit(T_FILLED[features].to_numpy(), target)
+    return m
+
+
+F_FULL = TRUTH.f(T_FULL)
+PROD_I = len(TERMS) - 1
+PROD_FULL = TRUTH.term_values(T_FULL, PROD_I)
+PROJ_ALL = fit_projection(FEATURE_ORDER, F_FULL)  # проекция всей f на аддитивные функции 34 признаков
+PROJ_PAIR = fit_projection(INTER, PROD_FULL)       # проекция одного произведения на функции двух его признаков
+
+
+def r2_of(pred, target):
+    return 1 - np.var(target - pred) / np.var(target)
+
+
+# Насколько аддитивна f: доля дисперсии, которую объясняет лучшая аддитивная функция
+add_part = sum(TRUTH.term_values(T_FULL, i) for i in range(PROD_I))
+print(f"R² аддитивной проекции f (34 признака): {r2_of(PROJ_ALL.predict(T_FILLED.to_numpy()), F_FULL):.3f}")
+print(f"  для сравнения, R² одной аддитивной части f (без произведения): {r2_of(add_part, F_FULL):.3f}")
+print(f"R² проекции произведения на функции двух его признаков: "
+      f"{r2_of(PROJ_PAIR.predict(T_FILLED[INTER].to_numpy()), PROD_FULL):.3f}")
+
+# Коэффициент при z² у проекции и у ALE истины (по всем строкам)
+rho_pair = np.corrcoef(TRUTH._z(T_FULL, INTER[0]), TRUTH._z(T_FULL, INTER[1]))[0, 1]
+c_prod = TRUTH.coef(PROD_I)
+print(f"\nρ(photos, wall_posts) = {rho_pair:.3f}; нормальная теория: a/c = ρ/(1+ρ²) = {rho_pair / (1 + rho_pair**2):.3f}, "
+      f"ALE: ½ρ = {rho_pair / 2:.3f}, отношение {2 / (1 + rho_pair**2):.2f}")
+for j, f in enumerate(INTER):
+    grid = np.quantile(T_FILLED[f], np.linspace(0.02, 0.98, 41))
+    Tg = pd.DataFrame(np.tile(T_FILLED[INTER].median().to_numpy(), (len(grid), 1)), columns=INTER)
+    Tg[f] = grid
+    shape = PROJ_PAIR.predict(Tg.to_numpy())
+    zg = (grid - TRUTH.mu[f]) / TRUTH.sd[f]
+    slope = np.polyfit(zg**2, shape, 1)[0] / c_prod
+    print(f"  {f}: коэффициент при z² у численной проекции / c = {slope:.3f}")
+
+
+class FoldProjection:
+    """Аддитивная проекция sqrt(R²)·f в координатах Z фолда (как FoldTruth)."""
+
+    def __init__(self, pipe, names, r2):
+        self.names, self.amp, self.aff = list(names), np.sqrt(r2), fold_affine(pipe)
+        self.idx = [self.names.index(c) for c in FEATURE_ORDER]
+
+    def predict(self, Z):
+        Z = np.asarray(Z, float)[:, self.idx]
+        T = np.column_stack([Z[:, i] * self.aff[c][1] + self.aff[c][0] for i, c in enumerate(FEATURE_ORDER)])
+        return self.amp * PROJ_ALL.predict(T)
+
+
+def h_statistic(model, Z, a, b):
+    """H² Фридмана для пары (a, b) по объектам Z и доля дисперсии прогноза от их взаимодействия.
+
+    PD считаются в точках самих объектов, все PD центрированы:
+    H² = Σ(PD_ab − PD_a − PD_b)² / Σ PD_ab²; share = Σ(PD_ab − PD_a − PD_b)² / Σ(f̂ − mean f̂)².
+    """
+    Zv = np.asarray(Z, float)
+    n = len(Zv)
+    ia, ib = Z.columns.get_loc(a), Z.columns.get_loc(b)
+
+    def pd_at(cols):
+        big = np.tile(Zv, (n, 1))
+        for c in cols:
+            big[:, c] = np.repeat(Zv[:, c], n)  # блок i: всем объектам подставлено значение объекта i
+        v = model.predict(big).reshape(n, n).mean(axis=1)
+        return v - v.mean()
+
+    pab, pa, pb = pd_at([ia, ib]), pd_at([ia]), pd_at([ib])
+    inter = np.sum((pab - pa - pb) ** 2)
+    pred = model.predict(Zv)
+    return {"H2": inter / np.sum(pab**2), "share": inter / np.sum((pred - pred.mean()) ** 2)}
+
+
+def run_addendum(r2, model_name, seed):
+    y, _ = make_target(TRUTH, T_FULL, r2, seed)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=seed)
+    res = E.fit_and_explain(model_name, X_train, y_train, X_test, y_test, log_cols=FEATURES_LOG,
+                            other_cols=FEATURES_OTHER, curve_features=CONTINUOUS, seed=seed,
+                            methods=("shap", "pdp", "ale"))
+    key = {"r2": r2, "model": model_name, "seed": seed}
+    ft = FoldTruth(TRUTH, res.pipe, res.features, r2)
+    Z_expl = res.samples["test"]
+    phi = ft.true_shap(Z_expl, res.background).abs()
+    sh = res[("shap", "test")].local.abs()
+    glob = sh.mean()
+    true6 = RELEVANT
+    rows = []
+    for i in range(len(sh)):
+        s, t = sh.iloc[i], phi.iloc[i]
+        top_t3 = set(M.top_k(t, 3))
+        rows.append({"rho_all": M.rank_agreement(s, t)["spearman"],
+                     "rho_true6": M.rank_agreement(s, t, true6)["spearman"],
+                     "rho_true6_global": M.rank_agreement(glob, t, true6)["spearman"],
+                     "top3": len(set(M.top_k(s, 3)) & top_t3) / 3,
+                     "top3_global": len(set(M.top_k(glob, 3)) & top_t3) / 3,
+                     "true_in_top6": len(set(M.top_k(s, K)) & set(true6)) / K})
+    loc = pd.DataFrame(rows)
+    local = {**key, **{f"{c}_median": loc[c].median() for c in loc}, **{f"{c}_mean": loc[c].mean() for c in loc}}
+
+    # Кривые: модель против проекции и против ALE истины
+    proj = FoldProjection(res.pipe, res.features, r2)
+    grids = res.grids
+    sets = {"pdp": res[("pdp", "test")].curves, "ale": res[("ale", "test")].curves,
+            "ale_true": E.accumulated_local_effects(ft, res.Z_test, grids).curves,
+            "proj": E.partial_dependence(proj, res.Z_test, grids).curves}
+    sets["main_true"] = {f: c.assign(value=ft.main_curve(f, c["x"].to_numpy())) for f, c in sets["pdp"].items()}
+    proj_rows = []
+    for a in ("pdp", "ale"):
+        for b in ("ale_true", "proj", "main_true"):
+            cmp = M.compare_curves(sets[a], sets[b])
+            for f in INTER + ["vk_counter_friends", "vk_post_avg_likes", "vk_counter_audios"]:
+                if b == "main_true" and f in INTER:
+                    continue
+                proj_rows.append({**key, "row": "curve", "a": a, "b": b, "feature": f, **cmp.loc[f].to_dict()})
+    # Проекция против ALE истины (то, что модель «должна» выучить, если выучит только аддитивное)
+    cmp = M.compare_curves(sets["proj"], sets["ale_true"])
+    for f in INTER:
+        proj_rows.append({**key, "row": "curve", "a": "proj", "b": "ale_true", "feature": f, **cmp.loc[f].to_dict()})
+
+    # Насколько прогноз аддитивен по паре photos × wall_posts
+    model = res.pipe.named_steps["model"]
+    hs = {"model": h_statistic(model, Z_expl, *INTER), "truth": h_statistic(ft, Z_expl, *INTER)}
+    extra = {}
+    if model_name == "hgb":
+        Z_train = pd.DataFrame(res.pipe.named_steps["prep"].transform(X_train), columns=res.features)
+        add = make_model("hgb", random_state=seed).set_params(interaction_cst=[[i] for i in range(len(res.features))])
+        add.fit(Z_train.to_numpy(), y_train)
+        p, pa = model.predict(res.Z_test.to_numpy()), add.predict(res.Z_test.to_numpy())
+        extra = {"add_vs_full_r2": 1 - np.var(p - pa) / np.var(p),
+                 "r2_test_full": r2_of(p, y_test), "r2_test_add": r2_of(pa, y_test)}
+    proj_rows.append({**key, "row": "additivity", "H2_model": hs["model"]["H2"], "share_model": hs["model"]["share"],
+                      "H2_truth": hs["truth"]["H2"], "share_truth": hs["truth"]["share"], **extra})
+    return local, proj_rows
+
+
+# %%
+add_jobs = [(r2, m, seed) for r2 in R2_LEVELS if r2 > 0 for m in MODELS for seed in range(N_SEEDS)]
+if os.environ.get("E2_RECOMPUTE") != "1" and all(p.exists() for p in CACHE_ADD.values()):
+    local_tab, proj_tab = (pd.read_csv(CACHE_ADD[k]) for k in ("local", "projection"))
+else:
+    add_jobs.sort(key=lambda j: {"rf": 0, "hgb": 1, "ridge": 2}[j[1]])
+    t0 = time.perf_counter()
+    out = Parallel(n_jobs=N_JOBS)(delayed(run_addendum)(*j) for j in add_jobs)
+    print(f"Дополнение: {len(add_jobs)} прогонов за {(time.perf_counter() - t0) / 60:.1f} мин на {N_JOBS} процессах")
+    local_tab = pd.DataFrame([o[0] for o in out])
+    proj_tab = pd.DataFrame([r for o in out for r in o[1]])
+    local_tab.to_csv(CACHE_ADD["local"], index=False)
+    proj_tab.to_csv(CACHE_ADD["projection"], index=False)
+
+# Проверка: SHAP те же, что в основных прогонах
+chk = local_tab.merge(runs[["r2", "model", "seed", "shap_vs_true_obj_rho"]], on=["r2", "model", "seed"])
+print("Макс. расхождение ρ по 34 признакам с основными прогонами:",
+      float((chk["rho_all_median"] - chk["shap_vs_true_obj_rho"]).abs().max()))
+
+# %%
+print("Локальное, по объекту (медиана по объектам, среднее по 30 повторам):")
+lc = ["rho_all_median", "rho_true6_median", "rho_true6_global_median", "top3_mean", "top3_global_mean", "true_in_top6_mean"]
+print(local_tab.groupby(["model", "r2"])[lc].mean().round(2).to_string())
+print("Случайный уровень: ρ 0, top-3 по 34 признакам 3/34 ≈ 0.09, истинных в top-6 6/34 ≈ 0.18")
+print("\nДоля повторов, где ρ по 6 истинным у локальных выше глобальной базовой линии:")
+print((local_tab["rho_true6_median"] > local_tab["rho_true6_global_median"]).groupby(
+    [local_tab["model"], local_tab["r2"]]).mean().unstack().round(2))
+
+# %%
+cv = proj_tab[proj_tab["row"] == "curve"]
+print("Кривые признаков взаимодействия: модель против проекции и против ALE истины (среднее по повторам)")
+ci = cv[cv["feature"].isin(INTER)]
+print(ci.pivot_table(index=["model", "r2"], columns=["a", "b"], values="ccc").round(2).to_string())
+print("\nТо же, корреляция (только форма):")
+print(ci.pivot_table(index=["model", "r2"], columns=["a", "b"], values="pearson").round(2).to_string())
+print("\nРазмах кривой модели / размах эталона (взаимодействие) и для калибровки — главные эффекты:")
+amp = cv.assign(ratio=cv["amp_a"] / cv["amp_b"], kind=np.where(cv["feature"].isin(INTER), "inter", "main"))
+print(amp[amp["a"].isin(["pdp"])].pivot_table(index=["model", "r2"], columns=["kind", "b"], values="ratio",
+                                              aggfunc="median").round(2).to_string())
+print("\nДоля повторов, где CCC модели с проекцией выше, чем с ALE истины:")
+w = ci[ci["b"].isin(["proj", "ale_true"]) & ci["a"].isin(["pdp", "ale"])].pivot_table(
+    index=["model", "r2", "seed", "a", "feature"], columns="b", values="ccc")
+print((w["proj"] > w["ale_true"]).groupby(["model", "r2", "a"]).mean().unstack("a").round(2))
+
+# %%
+ad = proj_tab[proj_tab["row"] == "additivity"]
+print("Аддитивность прогноза по паре photos × wall_posts (среднее по повторам):")
+print(ad.groupby(["model", "r2"])[["H2_model", "share_model", "H2_truth", "share_truth"]].mean().round(3).to_string())
+print("\nHGB против аддитивной HGB на тех же данных:")
+print(ad[ad["model"] == "hgb"].groupby("r2")[["add_vs_full_r2", "r2_test_full", "r2_test_add"]].mean().round(3))
+
+# %% [markdown]
 # ## Выводы
 #
 # Подробно с числами и сравнением с E1: `docs/e2_results.md`.
@@ -384,6 +617,10 @@ print(runs.groupby(["model", "r2"])[cols].mean().round(2))
 # 4. **Двойник:** HGB его не использует, RF частично, Ridge почти поровну. Методы
 #    это видят: свойство модели, а не метода.
 # 5. **PDP и ALE истинной функции** на взаимодействии с r = 0.54 расходятся точно
-#    по Apley и Zhu, но у моделей снова совпадают: деревья выучивают аддитивную замену.
-# 6. **LIME** у деревьев недооценивает флаг has_university. Асимметрия признаков
-#    методы не ломает.
+#    по Apley и Zhu, но у моделей снова совпадают: модели почти аддитивны по этой паре
+#    (взаимодействие даёт 0.1–0.3% дисперсии прогноза против 15% у истины). Размах их
+#    аддитивной замены меньше полной аддитивной проекции, ближе к ALE истины (раздел 10).
+# 7. **Локально** порядок среди истинных признаков у объекта лучше глобального, но top-3
+#    объекта по его SHAP совпадает с истинным хуже, чем глобальный top-3 модели.
+# 6. **LIME** у деревьев недооценивает флаг has_university. Связь асимметрии с ложной
+#    важностью — только слабое наблюдение.
