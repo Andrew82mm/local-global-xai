@@ -31,9 +31,11 @@ notebooks/                 эксперименты, по порядку
   04_framework_check.py      проверка общего кода на синтетике, время методов
   05_hgb_interaction.py      разбор: почему PI видит x1·x2 у бустинга, а SHAP нет
   06_e1_synthetic.py         E1: синтетика при разном уровне сигнала
+  07_e2_semisynthetic.py     E2: полусинтетика на реальных признаках
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
+  semisynthetic.py           истинная функция E2 на реальных признаках
   models.py                  Pipeline и модели Ridge, RF, HGB
   explain.py                 PI, PDP, ALE, SHAP, LIME в едином формате, нулевой эталон
   metrics.py                 метрики согласованности
@@ -44,7 +46,7 @@ docs/                      литература, исследование дан
 ```
 
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
-Результаты E1: [docs/e1_results.md](docs/e1_results.md).
+Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md).
 
 ## Тесты
 
