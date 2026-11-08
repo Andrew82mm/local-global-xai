@@ -131,8 +131,13 @@ if os.environ.get("E3_TIMING") == "1":
 # ## 3. Все прогоны (или кеш)
 
 # %%
+def read_cache(path):
+    """Строка "null" (kind перестановки) не должна читаться как NaN."""
+    return pd.read_csv(path, keep_default_na=False, na_values=[""], low_memory=False)
+
+
 recompute = os.environ.get("E3_RECOMPUTE") == "1"
-tables = {k: pd.read_csv(p) for k, p in CACHE.items()} if not recompute and all(p.exists() for p in CACHE.values()) else {}
+tables = {k: read_cache(p) for k, p in CACHE.items()} if not recompute and all(p.exists() for p in CACHE.values()) else {}
 done = set(tables["runs"][["trait", "model", "kind", "idx"]].itertuples(index=False, name=None)) if tables else set()
 t_all = time.perf_counter()
 for model_name in ("rf", "hgb", "ridge"):
@@ -304,6 +309,77 @@ for t in TRAITS:
 print(pd.DataFrame(ridge_alpha).T.round(1))
 
 # %% [markdown]
+# ### 5.3 Ridge: нуль с α, зафиксированным на наблюдаемом
+#
+# Добавлено после прогонов. Нулевые RidgeCV выбирают α = 10⁴ (верхняя граница сетки),
+# наблюдаемая у `extra` — около 264. Тест по доле важности для Ridge оказался слабым
+# (не находит даже друзей). Честнее сравнивать с нулём той же модели: перестановки
+# с α, равным наблюдаемому. У `emo` наблюдаемый α тоже 10⁴, там пересчёт не нужен.
+
+# %%
+CACHE_FIXED = RESULTS / f"e3{'_smoke' if SMOKE else ''}_ridge_fixed_alpha.csv"
+
+
+def run_fixed_alpha(trait, idx, alpha):
+    """Нулевой прогон Ridge с фиксированным α (подмена make_model внутри процесса)."""
+    from sklearn.linear_model import RidgeCV
+
+    from xai_consistency import models as Mo
+    original = Mo.make_model
+    Mo.make_model = lambda name, random_state=42: RidgeCV(alphas=[alpha])
+    try:
+        rows, _ = run_job(trait, "ridge", "null", idx)
+    finally:
+        Mo.make_model = original  # процессы joblib переиспользуются
+    return rows
+
+
+if CACHE_FIXED.exists() and not recompute:
+    fixed = read_cache(CACHE_FIXED)
+else:
+    a_obs = ridge_alpha["extra"]["alpha наблюдаемой"]
+    t0 = time.perf_counter()
+    out = Parallel(n_jobs=N_JOBS)(delayed(run_fixed_alpha)("extra", i, a_obs) for i in range(N_PERM))
+    print(f"Ridge с α = {a_obs:.1f}: {N_PERM} перестановок за {(time.perf_counter() - t0) / 60:.1f} мин")
+    fixed = pd.DataFrame([r for o in out for r in o])
+    fixed.to_csv(CACHE_FIXED, index=False)
+fw = fixed.pivot(index=["idx", "method"], columns="feature", values="importance").reindex(columns=FEATURES)
+rows = {}
+for meth in METHODS:
+    obs = get("extra", "ridge", "obs", meth).iloc[0]
+    null = fw.xs(meth, level="method")[obs.index]
+    p = M.null_tail_pvalues(obs, null, log=not meth.startswith("pi"))
+    rows[meth] = M.bh_fdr(p)
+q_fixed = pd.DataFrame(rows)
+print("extra × Ridge, нуль с фиксированным α: признаки с q_tail < 0.05")
+print({m: q_fixed.index[q_fixed[m] < ALPHA].tolist() for m in METHODS})
+print("q_tail для признаков, выделившихся хотя бы у одного метода:")
+print(q_fixed[(q_fixed < ALPHA).any(axis=1)].round(3).to_string())
+
+# %% [markdown]
+# У Ridge mean |SHAP| ∝ |β|, а нуль для |β| близок к полунормальному. У его логарифма длинный
+# левый хвост, SD на log-шкале большая, и хвостовой тест теряет мощность. Нормальная
+# аппроксимация на исходной шкале, наоборот, слишком либеральна (калибровка ниже). Поэтому
+# для Ridge с фиксированным α смотрим и на признаки выше всех перестановок.
+
+# %%
+for meth in ["shap_test", "pi_test"]:
+    obs = get("extra", "ridge", "obs", meth).iloc[0]
+    null = fw.xs(meth, level="method")[obs.index]
+    p_raw = M.null_tail_pvalues(obs, null, log=False)
+    t = pd.DataFrame({"набл./медиана нуля": obs / null.median(), "выше всех": obs > null.max(),
+                      "p_emp": M.null_pvalues(obs, null), "p_tail_log": M.null_tail_pvalues(obs, null, log=not meth.startswith("pi")),
+                      "p_tail_raw": p_raw, "q_tail_raw": M.bh_fdr(p_raw)}).sort_values("p_emp").head(6)
+    print(meth)
+    print(t.round(4).to_string())
+null = fw.xs("shap_test", level="method")
+for log in (True, False):
+    ps = np.concatenate([M.null_tail_pvalues(null.iloc[i], null.drop(index=null.index[i]), log=log).to_numpy()
+                         for i in range(len(null))])
+    print(f"Калибровка, SHAP Ridge с фикс. α, {'log' if log else 'исходная шкала'}:",
+          {t: round(float(np.mean(ps < t)), 4) for t in (0.05, 0.01, 0.001)})
+
+# %% [markdown]
 # ## 6. Устойчивость: 5×5 CV и seed моделей
 
 # %%
@@ -447,3 +523,12 @@ print(pd.DataFrame(rows).pivot_table(index=["trait", "model"], columns=["kind", 
 # ## Выводы
 #
 # Подробно с числами и сравнением с E1 и E2: `docs/e3_results.md`.
+#
+# 1. **`extra`:** у деревьев от нуля отличаются друзья и лайки (у RF ровно они у всех пяти
+#    методов). HGB по PI выделяет ещё три флага. Ridge с RidgeCV нельзя сравнивать с нулём:
+#    нулевые модели выбирают α = 10⁴. С фиксированным α — друзья, лайки, has_university.
+# 2. **`emo`:** ни один признак не отличается от нуля ни у одной модели и метода.
+# 3. **Раскол методов** тот же, что в E1 и E2: SHAP, LIME, PDP и ALE согласны (0.81–0.97)
+#    у обеих черт и в нуле, PI с ними согласен только у `extra`.
+# 4. **Устойчивость рангов SHAP и LIME** между фолдами высокая и у `emo` (0.74–0.85 у деревьев),
+#    поэтому она не доказывает сигнал.
