@@ -207,6 +207,7 @@ def shap_values(model, model_name, Z_background, Z_explain, split, grids=None):
         values = explainer.shap_values(Z_explain.to_numpy())
     else:
         explainer = shap.TreeExplainer(model, data=bg, feature_perturbation="interventional")
+        float32_safe_thresholds(explainer)
         values = explainer.shap_values(Z_explain.to_numpy(), check_additivity=True)
     local = pd.DataFrame(values, columns=Z_explain.columns)
     imp = local.abs().mean()
@@ -222,6 +223,30 @@ def shap_values(model, model_name, Z_background, Z_explain, split, grids=None):
     return Explanation("shap", split, imp, sign, local=local, curves=curves,
                        info={"expected_value": float(np.ravel(explainer.expected_value)[0])},
                        seconds=time.perf_counter() - t0)
+
+
+def float32_safe_thresholds(explainer):
+    """Пороги деревьев sklearn → ближайшее float32-число вниз (внутри объяснителя shap).
+
+    Зачем: sklearn (RF) сравнивает x(float32) <= t(float64). Интервенционный
+    TreeSHAP фактически работает с порогом в точности float32. Если порог отличается
+    от значения в данных меньше чем на шаг float32, точка уходит не в ту ветку, и
+    сумма SHAP расходится с прогнозом. На реальных долях (repost_share, *_per_post)
+    так бывает: значения рациональные, и в бутстреп-выборке середина между z(0.2) и
+    z(0.4) совпадает с z(0.3) с точностью до 1e-8. Ошибка аддитивности RF доходила
+    до 0.02. Для float32 x условие x <= t равносильно x <= t_down, где t_down —
+    наибольшее float32-число не больше t. Поэтому прогноз не меняется, а
+    неоднозначность пропадает (ошибка до 1e-7, тест test_rf_shap_additivity_rational_ratios).
+    """
+    tm = explainer.model
+    if getattr(tm, "input_dtype", None) is not np.float32:
+        return
+    inner = tm.features >= 0
+    t = np.asarray(tm.thresholds, dtype=np.float64)
+    t32 = t.astype(np.float32)
+    over = t32.astype(np.float64) > t
+    t32[over] = np.nextafter(t32[over], np.float32(-np.inf))
+    tm.thresholds = np.where(inner, t32.astype(np.float64), t).astype(tm.thresholds.dtype)
 
 
 def exact_interventional_shap(model, x, background):

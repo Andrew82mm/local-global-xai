@@ -94,3 +94,33 @@ def test_exact_shap_on_product():
     phi = E.exact_interventional_shap(Prod(), np.array([2.0, 3.0, 5.0]), bg)
     # Центрированный фон: v(∅) = E[ab] ≈ 0, v({a}) = a·E b = 0, v({a,b}) = ab, поэтому φ_a = ½(ab − E[ab]) ≈ 3
     assert np.allclose(phi[:2], 3.0, atol=0.15) and abs(phi[2]) < 1e-12
+
+
+def test_rf_shap_additivity_rational_ratios():
+    """Регрессия: доли вида k/n в бутстрепе давали пороги RF почти на значениях данных.
+
+    Без float32_safe_thresholds сумма SHAP расходилась с прогнозом (на реальных
+    данных до 0.02)."""
+    import shap
+
+    rng = np.random.default_rng(0)
+    n = 800
+    k, m = rng.integers(0, 6, n), rng.integers(1, 9, n)
+    ratio = np.minimum(k / m, 1.0)
+    X = pd.DataFrame({"ratio": ratio, "skew": rng.exponential(1, n) ** 3, "x": rng.normal(size=n)})
+    y = ratio + 0.3 * X["x"] + rng.normal(0, 1, n)
+    pipe = make_pipeline("rf", other_cols=list(X.columns), random_state=0)
+    Z_train, Z_test = fit_transform(pipe, X.iloc[:700], y[:700], X.iloc[700:])
+    model = pipe.named_steps["model"]
+    bg = Z_train.iloc[:100]
+    raw = shap.TreeExplainer(model, data=bg.to_numpy(), feature_perturbation="interventional")
+    v = raw.shap_values(Z_test.to_numpy(), check_additivity=False)
+    raw_err = np.abs(raw.expected_value + v.sum(1) - model.predict(Z_test.to_numpy())).max()
+    sh = E.shap_values(model, "rf", bg, Z_test, "test")  # с исправлением
+    err = sh.info["expected_value"] + sh.local.sum(axis=1) - model.predict(Z_test.to_numpy())
+    assert np.abs(err).max() < 1e-6
+    # прогноз внутренней модели shap после правки порогов совпадает с sklearn
+    fixed = shap.TreeExplainer(model, data=bg.to_numpy(), feature_perturbation="interventional")
+    E.float32_safe_thresholds(fixed)
+    assert np.allclose(fixed.model.predict(Z_test.to_numpy()), model.predict(Z_test.to_numpy()), atol=1e-12)
+    print("ошибка без исправления:", raw_err)
