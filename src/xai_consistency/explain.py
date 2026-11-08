@@ -311,6 +311,11 @@ class ModelExplanations:
     grids: dict
     explanations: dict  # {(method, split): Explanation}
     seconds_fit: float
+    # Для сравнения с истиной: обученный Pipeline, фон SHAP, объясняемые выборки и тест в Z
+    pipe: object = None
+    background: pd.DataFrame | None = None
+    samples: dict | None = None
+    Z_test: pd.DataFrame | None = None
 
     def __getitem__(self, key):
         return self.explanations[key]
@@ -373,6 +378,7 @@ def fit_and_explain(model_name, X_train, y_train, X_test, y_test, log_cols=(), o
         r2_train=r2_score(y_train, model.predict(Z_train.to_numpy())),
         r2_test=r2_score(y_test, model.predict(Z_test.to_numpy())),
         features=names, grids=grids, explanations=out, seconds_fit=seconds_fit,
+        pipe=pipe, background=background, samples=sample, Z_test=Z_test,
     )
 
 
@@ -389,7 +395,7 @@ def null_importances(model_name, X_train, y_train, X_test, y_test, n_perm=50, se
         r = np.random.default_rng(seed + 10_000 + i)
         res = fit_and_explain(model_name, X_train, r.permutation(y_train), X_test,
                               r.permutation(y_test), seed=seed + i, **kwargs)
-        return res.importances(), res.r2_test
+        return res.importances(), res.r2_test  # без pipe и матриц: в процессы не тащим
 
     runs = Parallel(n_jobs=n_jobs)(delayed(one)(i) for i in range(n_perm))
     tables = {col: pd.DataFrame([imp[col] for imp, _ in runs]).reset_index(drop=True)
