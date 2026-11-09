@@ -493,6 +493,62 @@ print(hit[hit["method"].isin(TEST_METHODS)].pivot_table(index="feature", columns
       .round(4).to_string())
 
 # %% [markdown]
+# ### 5.5 extra × RF и HGB: 1000 перестановок для PI, SHAP, PDP, ALE
+#
+# Добавлено при закрытии E3. У RF друзья и лайки выделялись только как «выше всех 100
+# перестановок», а BH по 34 признакам на таком разрешении не проходит. Тот же протокол и seed,
+# что в основном расчёте (первые 100 перестановок совпадают), без LIME (около часа на модель)
+# и без SHAP на обучении. Оценка времени: 0.55 с на перестановку RF и 0.2 с у HGB на 6 процессах.
+
+# %%
+N_TREE = 12 if SMOKE else 1000
+CACHE_TREE = RESULTS / f"e3{'_smoke' if SMOKE else ''}_trees_1000.csv"
+TREE_METHODS = ["pi_test", "shap_test", "pdp_test", "ale_test"]
+
+
+def run_tree_null(model_name, idx):
+    X_tr, X_te, y_tr, y_te, seed = split_for("extra", "null", idx)
+    res = E.fit_and_explain(model_name, X_tr, y_tr, X_te, y_te, log_cols=FEATURES_LOG, other_cols=FEATURES_OTHER,
+                            curve_features=CONTINUOUS, seed=seed, methods=("pi", "pdp", "ale", "shap"), splits=("test",))
+    return [{"model": model_name, "idx": idx, "method": f"{m}_{s}", "feature": f, "importance": ex.importance.get(f, np.nan)}
+            for (m, s), ex in res.explanations.items() for f in res.features]
+
+
+tree = read_cache(CACHE_TREE) if CACHE_TREE.exists() and not recompute else pd.DataFrame(columns=["model", "idx"])
+for m in ("rf", "hgb"):
+    have = set(tree.loc[tree["model"] == m, "idx"].astype(int))
+    todo = [i for i in range(N_TREE) if i not in have]
+    if todo:
+        t0 = time.perf_counter()
+        out = Parallel(n_jobs=N_JOBS)(delayed(run_tree_null)(m, i) for i in todo)
+        print(f"extra × {m}, без LIME: {len(todo)} перестановок за {(time.perf_counter() - t0) / 60:.1f} мин")
+        tree = pd.concat([tree, pd.DataFrame([r for o in out for r in o])], ignore_index=True)
+        tree.to_csv(CACHE_TREE, index=False)
+tree["idx"] = tree["idx"].astype(int)
+tw = tree.pivot(index=["model", "method", "idx"], columns="feature", values="importance").reindex(columns=FEATURES)
+for m in ("rf", "hgb"):
+    for meth in TREE_METHODS:
+        a = tw.loc[(m, meth)].loc[:N_PERM - 1].dropna(axis=1, how="all")
+        b = get("extra", m, "null", meth).sort_index()[a.columns]
+        assert np.allclose(a.to_numpy(), b.to_numpy(), atol=1e-9), (m, meth)
+print("Первые 100 перестановок совпадают с основным расчётом (RF и HGB, 4 метода)")
+
+rows = {}
+for m in ("rf", "hgb"):
+    for meth in TREE_METHODS:
+        obs = get("extra", m, "obs", meth).iloc[0]
+        null = tw.loc[(m, meth)][obs.index]
+        p = M.null_pvalues(obs, null)
+        rows[(m, meth)] = pd.DataFrame({"n_ge": (null >= obs).sum(), "p_emp": p, "q_emp": M.bh_fdr(p)})
+t1000 = pd.concat(rows, names=["model", "method", "feature"])
+print(f"extra × RF, HGB, {N_TREE} перестановок: признаки с q_emp < 0.05")
+print({k: t1000.loc[k].index[t1000.loc[k, "q_emp"] < ALPHA].tolist() for k in rows})
+print("Признаки с q_emp < 0.1 хотя бы у одной комбинации:")
+near = t1000[t1000["q_emp"] < 0.1].index.get_level_values("feature").unique()
+print(t1000[t1000.index.get_level_values("feature").isin(near)].reset_index()
+      .pivot_table(index="feature", columns=["model", "method"], values=["n_ge", "q_emp"]).round(3).to_string())
+
+# %% [markdown]
 # ## 6. Устойчивость: 5×5 CV и seed моделей
 
 # %%
@@ -750,10 +806,11 @@ print(local_tab.groupby(["trait", "model", "method", "kind"])[["friends_global_s
 #
 # Подробно с числами и сравнением с E1 и E2: `docs/e3_results.md`.
 #
-# 1. **`extra`:** у деревьев от нуля отличаются друзья и лайки (у RF ровно они у всех пяти
-#    методов). Флаги у HGB по PI по 1000 перестановкам не значимы (q 0.09–0.16): хвостовой тест
-#    на флагах либерален. Ridge с RidgeCV нельзя сравнивать с нулём (нулевые α = 10⁴);
-#    с фиксированным α и 1000 перестановками — друзья, лайки, gifts, у SHAP и LIME has_university.
+# 1. **`extra`** (1000 перестановок, эмпирическое p и BH; хвостовой тест отброшен как либеральный):
+#    у RF друзья и лайки у PI, SHAP, PDP и ALE (q 0.010–0.017), у HGB друзья у всех, лайки только
+#    у PDP. Флаги у деревьев не значимы. Ridge с RidgeCV нельзя сравнивать с нулём (нулевые α = 10⁴);
+#    с фиксированным α — друзья, лайки, gifts, у SHAP и LIME has_university. LIME деревьев только
+#    на 100 перестановках.
 # 2. **`emo`:** ни один признак не отличается от нуля ни у одной модели и метода.
 # 3. **Раскол методов** тот же, что в E1 и E2: SHAP, LIME, PDP и ALE согласны (0.81–0.97)
 #    у обеих черт и в нуле, PI с ними согласен только у `extra`.
