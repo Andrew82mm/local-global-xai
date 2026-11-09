@@ -237,6 +237,91 @@ cal.index.names = ["trait", "model", "method"]
 print("Доля перестановок с хвостовым p ниже порога (ожидается 0.05, 0.01, 0.001):")
 print(cal.groupby(level="method").agg(["mean", "max"]).round(3).to_string())
 
+# %% [markdown]
+# ### 5.1б Калибровка отдельно для флагов и непрерывных признаков
+#
+# Добавлено после первого разбора. Без сигнала PI флага у деревьев часто ровно 0 (модель флаг
+# не использует) с крошечным разбросом, и нормальная аппроксимация на таком нуле может давать
+# ложно малые p. Порог 0.002 близок к тому, что нужно BH для первых открытий из 34 (0.0015–0.003).
+
+# %%
+FLAGS = [f for f in FEATURES if f not in CONTINUOUS]
+
+
+def loo_tail_p(null, method):
+    """p каждой перестановки против остальных: перестановки × признаки."""
+    return pd.DataFrame([M.null_tail_pvalues(null.iloc[i], null.drop(index=null.index[i]),
+                                             log=not method.startswith("pi")).to_numpy()
+                         for i in range(len(null))], columns=null.columns)
+
+
+rows = []
+for t in TRAITS:
+    for m in MODELS:
+        for meth in ["pi_test", "shap_test", "lime_test"]:
+            P = loo_tail_p(get(t, m, "null", meth), meth)
+            for typ, cols in [("флаги", FLAGS), ("непрерывные", CONTINUOUS)]:
+                v = P[cols].to_numpy().ravel()
+                rows.append({"trait": t, "model": m, "method": meth, "type": typ,
+                             **{f"p<{a}": np.mean(v < a) for a in (0.05, 0.01, 0.002)}})
+cal_type = pd.DataFrame(rows)
+print("Доля перестановок с хвостовым p ниже порога, по типу признака (среднее по двум чертам):")
+print(cal_type.groupby(["model", "method", "type"])[["p<0.05", "p<0.01", "p<0.002"]].mean().round(4).to_string())
+
+# %%
+print("extra × HGB, три флага: наблюдаемая важность против 100 перестановок")
+rows = []
+for meth in ["pi_test", "shap_test", "lime_test"]:
+    obs, null = get("extra", "hgb", "obs", meth).iloc[0], get("extra", "hgb", "null", meth)
+    tst = tests.set_index(["trait", "model", "method", "feature"]).loc[("extra", "hgb", meth)]
+    for f in ["has_university", "profile_block", "personal_block"]:
+        rows.append({"method": meth, "feature": f, "перестановок ≥ набл.": int((null[f] >= obs[f]).sum()),
+                     "p_emp": tst.loc[f, "p_emp"], "p_tail": tst.loc[f, "p_tail"], "q_tail": tst.loc[f, "q_tail"],
+                     "доля нулевых ровно 0": float((null[f].abs() < 1e-12).mean())})
+print(pd.DataFrame(rows).round(4).to_string(index=False))
+
+# %% [markdown]
+# ### 5.1в extra × HGB: 1000 перестановок только для PI
+#
+# PI без SHAP и LIME дешёвая, поэтому для HGB у `extra` берём 1000 перестановок (тот же
+# протокол и seed: первые 100 совпадают с основными). Эмпирическое p с разрешением 1/1001
+# и BH по 34 признакам работают без хвостовой аппроксимации.
+
+# %%
+N_PI = 12 if SMOKE else 1000
+CACHE_PI = RESULTS / f"e3{'_smoke' if SMOKE else ''}_hgb_pi_{N_PI}.csv"
+
+
+def run_pi_only(trait, model_name, idx):
+    X_tr, X_te, y_tr, y_te, seed = split_for(trait, "null", idx)
+    res = E.fit_and_explain(model_name, X_tr, y_tr, X_te, y_te, log_cols=FEATURES_LOG, other_cols=FEATURES_OTHER,
+                            curve_features=CONTINUOUS, seed=seed, methods=("pi",), splits=())
+    return {"idx": idx, **res[("pi", "test")].importance.to_dict()}
+
+
+if CACHE_PI.exists() and not recompute:
+    pi_big = read_cache(CACHE_PI)
+else:
+    t0 = time.perf_counter()
+    pi_big = pd.DataFrame(Parallel(n_jobs=N_JOBS)(delayed(run_pi_only)("extra", "hgb", i) for i in range(N_PI)))
+    print(f"HGB, только PI: {N_PI} перестановок за {(time.perf_counter() - t0) / 60:.1f} мин")
+    pi_big.to_csv(CACHE_PI, index=False)
+pi_big = pi_big.set_index("idx")[FEATURES]
+same = get("extra", "hgb", "null", "pi_test").sort_index()
+print("Совпадение первых перестановок с основным расчётом, макс. |разница|:",
+      float((pi_big.loc[same.index[:N_PERM]] - same.to_numpy()).abs().max().max()))
+obs = get("extra", "hgb", "obs", "pi_test").iloc[0]
+p1000 = M.null_pvalues(obs, pi_big)
+pi_tab = pd.DataFrame({"перестановок ≥ набл.": (pi_big >= obs).sum(), "p_emp_1000": p1000, "q_emp_1000": M.bh_fdr(p1000),
+                       "q_tail_100": tests.set_index(["trait", "model", "method", "feature"]).loc[("extra", "hgb", "pi_test"), "q_tail"]})
+print(f"extra × HGB × PI, {N_PI} перестановок: признаки с q_emp < 0.05 или q_tail(100) < 0.05")
+print(pi_tab[(pi_tab["q_emp_1000"] < ALPHA) | (pi_tab["q_tail_100"] < ALPHA)].sort_values("p_emp_1000").round(4).to_string())
+print("Калибровка хвостового p на 1000 перестановках (флаги / непрерывные):")
+P = loo_tail_p(pi_big.iloc[:300], "pi_test")  # 300 перестановок: оценка доли до ~0.001 по 300·14 значениям
+for typ, cols in [("флаги", FLAGS), ("непрерывные", CONTINUOUS)]:
+    v = P[cols].to_numpy().ravel()
+    print(f"  {typ}:", {a: round(float(np.mean(v < a)), 4) for a in (0.05, 0.01, 0.002)})
+
 # %%
 print("Число признаков, которые выделились (q_tail < 0.05), и при эмпирическом p:")
 cnt = tests.assign(tail=tests["q_tail"] < ALPHA, emp=tests["q_emp"] < ALPHA, p05=tests["p_emp"] < ALPHA,
@@ -334,16 +419,19 @@ def run_fixed_alpha(trait, idx, alpha):
     return rows
 
 
-if CACHE_FIXED.exists() and not recompute:
-    fixed = read_cache(CACHE_FIXED)
-else:
+N_FIXED = 12 if SMOKE else 1000  # сначала было 100, затем добрано до 1000 (раздел 5.4)
+fixed = read_cache(CACHE_FIXED) if CACHE_FIXED.exists() and not recompute else pd.DataFrame(columns=["idx"])
+todo = [i for i in range(N_FIXED) if i not in set(fixed["idx"].astype(int))]
+if todo:
     a_obs = ridge_alpha["extra"]["alpha наблюдаемой"]
     t0 = time.perf_counter()
-    out = Parallel(n_jobs=N_JOBS)(delayed(run_fixed_alpha)("extra", i, a_obs) for i in range(N_PERM))
-    print(f"Ridge с α = {a_obs:.1f}: {N_PERM} перестановок за {(time.perf_counter() - t0) / 60:.1f} мин")
-    fixed = pd.DataFrame([r for o in out for r in o])
+    out = Parallel(n_jobs=N_JOBS)(delayed(run_fixed_alpha)("extra", i, a_obs) for i in todo)
+    print(f"Ridge с α = {a_obs:.1f}: {len(todo)} перестановок за {(time.perf_counter() - t0) / 60:.1f} мин")
+    fixed = pd.concat([fixed, pd.DataFrame([r for o in out for r in o])], ignore_index=True)
     fixed.to_csv(CACHE_FIXED, index=False)
-fw = fixed.pivot(index=["idx", "method"], columns="feature", values="importance").reindex(columns=FEATURES)
+fixed["idx"] = fixed["idx"].astype(int)
+fw_all = fixed.pivot(index=["idx", "method"], columns="feature", values="importance").reindex(columns=FEATURES)
+fw = fw_all[fw_all.index.get_level_values("idx") < N_PERM]  # первые 100, как в первом разборе
 rows = {}
 for meth in METHODS:
     obs = get("extra", "ridge", "obs", meth).iloc[0]
@@ -378,6 +466,31 @@ for log in (True, False):
                          for i in range(len(null))])
     print(f"Калибровка, SHAP Ridge с фикс. α, {'log' if log else 'исходная шкала'}:",
           {t: round(float(np.mean(ps < t)), 4) for t in (0.05, 0.01, 0.001)})
+
+# %% [markdown]
+# ### 5.4 Ridge с фиксированным α: 1000 перестановок, эмпирическое p и BH
+#
+# При 1000 перестановках минимальное p = 1/1001 ≈ 0.001, и BH по 34 признакам может
+# отвергать гипотезы без хвостовой аппроксимации. Сравниваем с выводом по первым 100.
+
+# %%
+rows = {}
+for meth in METHODS:
+    obs = get("extra", "ridge", "obs", meth).iloc[0]
+    null_all = fw_all.xs(meth, level="method")[obs.index]
+    p_all = M.null_pvalues(obs, null_all)
+    null_100 = fw.xs(meth, level="method")[obs.index]
+    rows[meth] = pd.DataFrame({"n_ge": (null_all >= obs).sum(), "p_emp": p_all, "q_emp": M.bh_fdr(p_all),
+                               "above_max_100": obs > null_100.max()})
+r1000 = pd.concat(rows, names=["method", "feature"])
+n_all = fw_all.index.get_level_values("idx").nunique()
+print(f"extra × Ridge, α фиксирован, {n_all} перестановок: признаки с q_emp < 0.05")
+print({m: r1000.loc[m].index[r1000.loc[m, "q_emp"] < ALPHA].tolist() for m in METHODS})
+print("\nПо 100 перестановкам «выше всех» было:", {m: r1000.loc[m].index[r1000.loc[m, "above_max_100"]].tolist() for m in METHODS})
+hit = r1000[(r1000["q_emp"] < ALPHA) | r1000["above_max_100"]].reset_index()
+print("\nПодробно (тест):")
+print(hit[hit["method"].isin(TEST_METHODS)].pivot_table(index="feature", columns="method", values=["n_ge", "q_emp"])
+      .round(4).to_string())
 
 # %% [markdown]
 # ## 6. Устойчивость: 5×5 CV и seed моделей
@@ -520,15 +633,132 @@ print("ρ рангов обучение–тест (среднее по повт
 print(pd.DataFrame(rows).pivot_table(index=["trait", "model"], columns=["kind", "method"], values="rho").round(2).to_string())
 
 # %% [markdown]
+# ## 10. Локальное против глобального (вопрос исследования 2)
+#
+# Добавлено после первого разбора. SHAP и LIME на тесте (200 объектов) у обеих черт, на тех же
+# прогонах, что выше: наблюдаемый, 100 перестановок, 25 фолдов CV. Пересчитываются только SHAP
+# и LIME на тесте, с теми же seed (проверка: mean |SHAP| совпадает с сохранённой важностью).
+# **Сохраняются только агрегаты по объектам** одного прогона, локальные значения не пишутся.
+#
+# Метрики прогона:
+# - **знак вклада** друзей и лайков: доля объектов, у которых знак вклада (φ у SHAP, коэффициент ×
+#   отклонение у LIME) совпадает с глобальным знаком признака. Для монотонного эффекта вклад
+#   отрицателен у объектов ниже фона, поэтому эта доля по построению близка к доле объектов
+#   по одну сторону от фона и сама по себе о согласии мало говорит;
+# - **направление эффекта**: SHAP — sign(φ)·sign(z − среднее фона), LIME — знак локального
+#   наклона. Доля объектов, где направление совпадает с глобальным знаком;
+# - **ρ по объектам** между |локальными вкладами| и глобальным порядком: собственным (среднее |вклада|
+#   того же метода) и PI на тесте. Медиана и квартили по объектам;
+# - **разброс**: SD локальных вкладов признака / среднее |вклада| (у LIME ещё SD наклона /
+#   |средний наклон|) у друзей и лайков и медиана по всем признакам.
+
+# %%
+CACHE_LOCAL = RESULTS / f"e3{'_smoke' if SMOKE else ''}_local.csv"
+LOCAL_FEATS = ["vk_counter_friends", "vk_post_avg_likes"]
+SHORT = {"vk_counter_friends": "friends", "vk_post_avg_likes": "likes"}
+
+
+def iqr_stats(v, name):
+    v = np.asarray(v, float)
+    return {f"{name}_median": np.nanmedian(v), f"{name}_q25": np.nanpercentile(v, 25), f"{name}_q75": np.nanpercentile(v, 75)}
+
+
+def run_local(trait, model_name, kind, idx):
+    X_tr, X_te, y_tr, y_te, seed = split_for(trait, kind, idx)
+    res = E.fit_and_explain(model_name, X_tr, y_tr, X_te, y_te, log_cols=FEATURES_LOG, other_cols=FEATURES_OTHER,
+                            curve_features=CONTINUOUS, seed=seed, methods=("shap", "lime"), splits=("test",))
+    Z = res.samples["test"]
+    pi = wide.loc[(trait, model_name, kind, idx, "pi_test")]
+    out = []
+    for meth in ("shap", "lime"):
+        ex = res[(meth, "test")]
+        contrib = ex.local if meth == "shap" else ex.info["contrib"]
+        if meth == "shap":
+            direction = np.sign(contrib) * np.sign(Z - res.background.mean())
+        else:
+            direction = np.sign(ex.local)
+        row = {"trait": trait, "model": model_name, "kind": kind, "idx": idx, "method": meth,
+               "mean_abs_check": float(contrib.abs().mean()["vk_counter_friends"]) if meth == "shap" else np.nan}
+        for f in LOCAL_FEATS:
+            g = ex.sign[f]
+            c, d = np.sign(contrib[f]), direction[f]
+            row[f"{SHORT[f]}_global_sign"] = g
+            row[f"{SHORT[f]}_contrib_sign"] = float((c[c != 0] == g).mean()) if g != 0 else np.nan
+            row[f"{SHORT[f]}_direction"] = float((d[d != 0] == g).mean()) if g != 0 else np.nan
+            row[f"{SHORT[f]}_spread"] = float(contrib[f].std() / contrib[f].abs().mean())
+            if meth == "lime":
+                row[f"{SHORT[f]}_slope_spread"] = float(ex.local[f].std() / abs(ex.local[f].mean()))
+        spread_all = contrib.std() / contrib.abs().mean().replace(0, np.nan)
+        row["spread_all_median"] = float(spread_all.median())
+        absl = contrib.abs()
+        own = absl.mean()
+        row.update(iqr_stats([M.rank_agreement(absl.iloc[i], own)["spearman"] for i in range(len(absl))], "rho_own"))
+        row.update(iqr_stats([M.rank_agreement(absl.iloc[i], pi)["spearman"] for i in range(len(absl))], "rho_pi"))
+        out.append(row)
+    return out
+
+
+local_jobs = [j for t in TRAITS for m in MODELS for j in jobs_for(t, m)]
+local_tab = read_cache(CACHE_LOCAL) if CACHE_LOCAL.exists() and not recompute else pd.DataFrame(columns=["trait", "model", "kind", "idx"])
+done_l = set(local_tab[["trait", "model", "kind", "idx"]].astype({"idx": int}).itertuples(index=False, name=None))
+todo = [j for j in local_jobs if j not in done_l]
+if todo:
+    todo.sort(key=lambda j: {"rf": 0, "hgb": 1, "ridge": 2}[j[1]])
+    t0 = time.perf_counter()
+    out = Parallel(n_jobs=N_JOBS)(delayed(run_local)(*j) for j in todo)
+    print(f"Локальные метрики: {len(todo)} прогонов за {(time.perf_counter() - t0) / 60:.1f} мин")
+    local_tab = pd.concat([local_tab, pd.DataFrame([r for o in out for r in o])], ignore_index=True)
+    local_tab.to_csv(CACHE_LOCAL, index=False)
+local_tab["idx"] = local_tab["idx"].astype(int)
+chk = local_tab[local_tab["method"] == "shap"].merge(
+    imp[(imp["method"] == "shap_test") & (imp["feature"] == "vk_counter_friends")][["trait", "model", "kind", "idx", "importance"]],
+    on=["trait", "model", "kind", "idx"])
+print("Проверка: макс. |mean |SHAP| друзей − сохранённая важность| =", float((chk["mean_abs_check"] - chk["importance"]).abs().max()))
+
+# %%
+LOCAL_METRICS = ["friends_contrib_sign", "likes_contrib_sign", "friends_direction", "likes_direction",
+                 "rho_own_median", "rho_own_q25", "rho_own_q75", "rho_pi_median",
+                 "friends_spread", "likes_spread", "spread_all_median", "friends_slope_spread", "likes_slope_spread"]
+
+
+def local_summary(metric):
+    """Наблюдаемый прогон, среднее по CV и нуль (среднее и 5–95%), процентиль наблюдаемого в нуле."""
+    rows = []
+    for (t, m, meth), g in local_tab.groupby(["trait", "model", "method"]):
+        if metric not in g or g[metric].isna().all():
+            continue
+        obs = g.loc[g["kind"] == "obs", metric].iloc[0]
+        null = g.loc[g["kind"] == "null", metric].dropna()
+        cv = g.loc[g["kind"] == "cv", metric]
+        rows.append({"trait": t, "model": m, "method": meth, "набл.": obs, "CV": cv.mean(),
+                     "нуль": null.mean(), "нуль 5%": null.quantile(0.05), "нуль 95%": null.quantile(0.95),
+                     "процентиль набл.": (null < obs).mean() * 100, "процентиль CV": (null < cv.mean()).mean() * 100})
+    return pd.DataFrame(rows).set_index(["method", "trait", "model"]).sort_index()
+
+
+for metric in LOCAL_METRICS:
+    print(f"\n{metric}:")
+    print(local_summary(metric).round(2).to_string())
+
+# %%
+print("Глобальный знак друзей и лайков: доля прогонов со знаком +1")
+print(local_tab.groupby(["trait", "model", "method", "kind"])[["friends_global_sign", "likes_global_sign"]]
+      .agg(lambda v: (v > 0).mean()).unstack("kind").round(2).to_string())
+
+# %% [markdown]
 # ## Выводы
 #
 # Подробно с числами и сравнением с E1 и E2: `docs/e3_results.md`.
 #
 # 1. **`extra`:** у деревьев от нуля отличаются друзья и лайки (у RF ровно они у всех пяти
-#    методов). HGB по PI выделяет ещё три флага. Ridge с RidgeCV нельзя сравнивать с нулём:
-#    нулевые модели выбирают α = 10⁴. С фиксированным α — друзья, лайки, has_university.
+#    методов). Флаги у HGB по PI по 1000 перестановкам не значимы (q 0.09–0.16): хвостовой тест
+#    на флагах либерален. Ridge с RidgeCV нельзя сравнивать с нулём (нулевые α = 10⁴);
+#    с фиксированным α и 1000 перестановками — друзья, лайки, gifts, у SHAP и LIME has_university.
 # 2. **`emo`:** ни один признак не отличается от нуля ни у одной модели и метода.
 # 3. **Раскол методов** тот же, что в E1 и E2: SHAP, LIME, PDP и ALE согласны (0.81–0.97)
 #    у обеих черт и в нуле, PI с ними согласен только у `extra`.
 # 4. **Устойчивость рангов SHAP и LIME** между фолдами высокая и у `emo` (0.74–0.85 у деревьев),
 #    поэтому она не доказывает сигнал.
+# 5. **Локально** `extra` почти не отличается от `emo` и перестановок: порядок вкладов у объекта,
+#    их разброс и знак вклада одинаковы. Отличаются согласие с PI, направление SHAP (на границе
+#    нуля) и однородность наклонов друзей у LIME.
