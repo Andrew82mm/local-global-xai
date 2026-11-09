@@ -39,6 +39,30 @@ def test_shap_and_lime_on_linear_model():
     assert np.allclose(lime.local.mean(), [2 * sd["a"], -sd["b"], 0], atol=0.02)
 
 
+def test_lime_categorical_flag_step():
+    """Ступенька на флаге: categorical даёт полный эффект перехода, гауссово возмущение — меньше."""
+    rng = np.random.default_rng(0)
+    n = 600
+    flag = (rng.random(n) < 0.2).astype(float)
+    Z = pd.DataFrame({"a": rng.normal(size=n), "flag": (flag - flag.mean()) / flag.std()})
+
+    mid = (Z["flag"].min() + Z["flag"].max()) / 2
+
+    class Step:
+        def predict(self, Zv):
+            Zv = np.asarray(Zv, float)
+            return Zv[:, 0] + 3.0 * (Zv[:, 1] > mid)  # порог посередине, как у деревьев
+
+    cat = E.lime_values(Step(), Z, Z.iloc[:20], "test", seed=0, num_samples=3000, categorical=["flag"])
+    assert np.allclose(cat.info["flip"]["flag"], 3.0, atol=0.15)  # знак «+» и у объектов с 0, и с 1
+    gap = Z["flag"].max() - Z["flag"].min()
+    assert np.isclose(cat.importance["flag"], 3.0 * Z["flag"].std(ddof=0) / gap, rtol=0.05)
+    gauss = E.lime_values(Step(), Z, Z.iloc[:20], "test", seed=0, num_samples=3000)
+    # гауссов сосед пересекает порог редко: наклон ≈ φ(расстояние до порога) · 3, около половины
+    assert gauss.importance["flag"] < 0.6 * cat.importance["flag"]
+    assert np.isclose(cat.importance["a"], 1.0, atol=0.1)
+
+
 def test_pi_group_and_zero_for_unused():
     model, Z, y = _linear_model()
     pi = E.permutation_importance(model, Z, y, n_repeats=5, seed=0)

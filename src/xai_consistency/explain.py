@@ -286,7 +286,7 @@ def _spearman_sign(x, v):
 # ---------------------------------------------------------------- LIME
 
 def lime_values(model, Z_train, Z_explain, split, seed=0, num_samples=5000,
-                kernel_width_factor=0.75):
+                kernel_width_factor=0.75, categorical=()):
     """LIME без дискретизации, соседи сэмплируются вокруг объекта.
 
     Ширина ядра = kernel_width_factor · sqrt(d) (0.75 — значение по умолчанию в lime).
@@ -296,14 +296,24 @@ def lime_values(model, Z_train, Z_explain, split, seed=0, num_samples=5000,
     local — коэффициенты локальной линейной модели (на 1 SD признака в обучении).
     info['contrib'] — вклад = коэффициент · (z − среднее)/SD, аналог SHAP.
     info['local_r2'] — R² локальной модели на взвешенных соседях.
+
+    categorical — бинарные признаки (имена), которые lime возмущает как категории:
+    значение берётся из обучающих частот, а в локальную модель входит индикатор
+    «то же значение, что у объекта» (E4). Его коэффициент переводится в эффект
+    перехода от меньшего значения к большему, info['flip'], а в local — в наклон
+    на 1 SD признака (эффект перехода · SD / разница значений), как у непрерывных.
     """
     t0 = time.perf_counter()
     d = Z_train.shape[1]
+    cat_idx = [Z_train.columns.get_loc(c) for c in categorical]
+    for c in categorical:
+        if Z_train[c].nunique() != 2:
+            raise ValueError(f"categorical: у {c!r} не два значения в обучении")
     explainer = LimeTabularExplainer(
         Z_train.to_numpy(), mode="regression", feature_names=list(Z_train.columns),
         discretize_continuous=False, sample_around_instance=True,
         kernel_width=kernel_width_factor * np.sqrt(d), feature_selection="none",
-        random_state=seed,
+        categorical_features=cat_idx or None, random_state=seed,
     )
     coefs, r2s, preds = [], [], []
     for i, row in enumerate(Z_explain.to_numpy()):
@@ -314,13 +324,21 @@ def lime_values(model, Z_train, Z_explain, split, seed=0, num_samples=5000,
         r2s.append(exp.score)
         preds.append(exp.local_pred[0] if np.ndim(exp.local_pred) else exp.local_pred)
     local = pd.DataFrame(coefs, columns=Z_explain.columns)
+    flip = {}
+    for c in categorical:
+        lo, hi = Z_train[c].min(), Z_train[c].max()
+        same = local[c].to_numpy()  # коэффициент при «то же значение, что у объекта»
+        flip[c] = np.where(Z_explain[c].to_numpy() == hi, same, -same)
+        local[c] = flip[c] * Z_train[c].std(ddof=0) / (hi - lo)
+    # у категориальных lime ставит среднее 0 и масштаб 1, поэтому вклад = наклон · z
     scaled = (Z_explain.to_numpy() - explainer.scaler.mean_) / explainer.scaler.scale_
     contrib = local * scaled
     imp = local.abs().mean()
     sign = np.sign(local.mean()).astype(int)
     return Explanation("lime", split, imp, sign, local=local,
                        info={"contrib": contrib, "local_r2": pd.Series(r2s), "local_pred": np.array(preds),
-                             "num_samples": num_samples, "kernel_width_factor": kernel_width_factor},
+                             "num_samples": num_samples, "kernel_width_factor": kernel_width_factor,
+                             "flip": pd.DataFrame(flip)},
                        seconds=time.perf_counter() - t0)
 
 
