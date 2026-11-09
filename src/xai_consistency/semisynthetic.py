@@ -85,7 +85,10 @@ class Truth:
             return self._z(T, a) * self._z(T, b)
         f = term.features[0]
         if term.func == "flag":
-            return np.round(np.asarray(T[f], float))
+            # Одна ступенька с порогом 0.5: вне {0, 1} значение не растёт дальше. Раньше было
+            # np.round без clip — «лестница» вне данных; на самих данных (0 и 1) то же самое,
+            # но LIME сэмплирует соседей вне {0, 1} и видел лестницу (E4, пункт 1)
+            return np.clip(np.round(np.asarray(T[f], float)), 0, 1)
         z = self._z(T, f)
         return np.tanh(1.5 * z) if term.func == "tanh" else z
 

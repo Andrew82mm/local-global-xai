@@ -33,6 +33,7 @@ notebooks/                 эксперименты, по порядку
   06_e1_synthetic.py         E1: синтетика при разном уровне сигнала
   07_e2_semisynthetic.py     E2: полусинтетика на реальных признаках
   08_e3_real.py              E3: extra и emo, нулевой эталон и устойчивость
+  09_e4_causes.py            E4: флаги, LIME, взаимодействия, PI группой, порог
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
@@ -47,7 +48,7 @@ docs/                      литература, исследование дан
 ```
 
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
-Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md), E3: [docs/e3_results.md](docs/e3_results.md).
+Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md), E3: [docs/e3_results.md](docs/e3_results.md), E4: [docs/e4_results.md](docs/e4_results.md).
 
 ## Тесты
 
