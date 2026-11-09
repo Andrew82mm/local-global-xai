@@ -665,6 +665,50 @@ for stat in ("top6", "top1", "z"):
                          aggfunc="median" if stat == "z" else "mean").round(2).to_string())
 
 # %% [markdown]
+# ## 6. Local R² LIME на реальных данных (после основного E4)
+#
+# Открытый вопрос пункта 2: отличает ли local R² сигнал от нуля на настоящих чертах.
+# `extra` и `emo`, RF и HGB: наблюдаемая модель (разбиение 0), 100 перестановок и 25 фолдов CV
+# с протоколом и seed E3 (`split_for`). LIME по умолчанию на тех же 200 тестовых объектах.
+# Сохраняются только агрегаты по объектам: медиана, квартили и среднее local R².
+# Ridge не считается: для линейной модели локальная линейная модель точна, local R² = 1 по построению.
+
+# %%
+N_PERM_LOCAL = 3 if SMOKE else 100
+
+
+def run_local_r2(trait, model_name, kind, idx):
+    X_tr, X_te, y_tr, y_te, seed = split_for(trait, kind, idx)
+    res = E.fit_and_explain(model_name, X_tr, y_tr, X_te, y_te, log_cols=FEATURES_LOG, other_cols=FEATURES_OTHER,
+                            curve_features=CONTINUOUS, seed=seed, methods=("lime",), splits=("test",))
+    r = res[("lime", "test")].info["local_r2"].to_numpy()
+    return {"trait": trait, "model": model_name, "kind": kind, "idx": idx, "r2_test": res.r2_test,
+            "local_r2_median": float(np.median(r)), "local_r2_q25": float(np.percentile(r, 25)),
+            "local_r2_q75": float(np.percentile(r, 75)), "local_r2_mean": float(r.mean())}
+
+
+local_jobs = [(t, m, k, i) for t in ("extra", "emo") for m in ("rf", "hgb")
+              for k, n in (("obs", 1), ("null", N_PERM_LOCAL), ("cv", 2 if SMOKE else 25)) for i in range(n)]
+local_real = cached("local_r2_real", lambda: pd.DataFrame(Parallel(n_jobs=N_JOBS)(
+    delayed(run_local_r2)(*j) for j in local_jobs)))
+
+# %%
+rows = []
+for (t, m), g in local_real.groupby(["trait", "model"]):
+    for stat in ("local_r2_median", "local_r2_q25"):
+        obs = g.loc[g["kind"] == "obs", stat].iloc[0]
+        null, cv = g.loc[g["kind"] == "null", stat], g.loc[g["kind"] == "cv", stat]
+        rows.append({"trait": t, "model": m, "stat": stat, "набл.": obs, "CV": cv.mean(), "CV SD": cv.std(),
+                     "нуль": null.mean(), "нуль 5%": null.quantile(0.05), "нуль 95%": null.quantile(0.95),
+                     "нуль max": null.max(), "процентиль набл.": (null < obs).mean() * 100,
+                     "процентиль CV": (null < cv.mean()).mean() * 100,
+                     "доля фолдов > 95% нуля": (cv > null.quantile(0.95)).mean()})
+print(pd.DataFrame(rows).set_index(["stat", "trait", "model"]).sort_index().round(3).to_string())
+print("\nСвязь local R² с R² на тесте по фолдам CV (ρ Спирмена):")
+for (t, m), g in local_real[local_real["kind"] == "cv"].groupby(["trait", "model"]):
+    print(t, m, round(g[["r2_test", "local_r2_median"]].corr("spearman").iloc[0, 1], 2))
+
+# %% [markdown]
 # ## Выводы
 #
 # Подробно с числами: `docs/e4_results.md`.
@@ -680,3 +724,6 @@ for stat in ("top6", "top1", "z"):
 #    нуля только из-за главных эффектов. Аддитивная HGB хуже на 0.012 R², причина не ясна.
 # 4. **PI группой** помогает Ridge (значимы posts и profile) и RF, вредит HGB.
 # 5. **Порог на признак** ниже 2%: одиночный признак находится при 0.5–1% дисперсии y.
+# 6. **Local R² на реальных данных:** у `extra` выше всех 100 перестановок на разбиении 0 и в 25 из 25
+#    фолдов (0.56–0.64 против нуля 0.37–0.41). У `emo` на разбиении 0 в пределах нуля, среднее CV
+#    на 88–95 процентиле нуля одного разбиения.
