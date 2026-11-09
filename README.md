@@ -34,6 +34,7 @@ notebooks/                 эксперименты, по порядку
   07_e2_semisynthetic.py     E2: полусинтетика на реальных признаках
   08_e3_real.py              E3: extra и emo, нулевой эталон и устойчивость
   09_e4_causes.py            E4: флаги, LIME, взаимодействия, PI группой, порог
+  10_figures.py              главные графики для текста, только из кеша
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
@@ -48,7 +49,7 @@ docs/                      литература, исследование дан
 ```
 
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
-Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md), E3: [docs/e3_results.md](docs/e3_results.md), E4: [docs/e4_results.md](docs/e4_results.md).
+Сводка: [docs/summary.md](docs/summary.md). Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md), E3: [docs/e3_results.md](docs/e3_results.md), E4: [docs/e4_results.md](docs/e4_results.md).
 
 ## Тесты
 
@@ -58,10 +59,16 @@ uv run pytest
 
 ## План работы
 
-1. Теория: методы и причины расхождений ([docs/reading.md](docs/reading.md)).
-2. Данные: синтетические сценарии (независимые признаки, корреляции,
-   взаимодействия) + реальные датасеты (California Housing, Bike Sharing).
-3. Модели: линейная регрессия, Random Forest, градиентный бустинг, MLP.
-4. Метрики согласованности: ранговые корреляции важностей (Спирмен, Кендалл,
-   top-k), сравнение формы эффектов (PDP/ALE против SHAP/LIME).
-5. Анализ расхождений и выводы.
+Задача — регрессия черт личности (`extra`, `emo`) по признакам профиля ВКонтакте,
+1000 человек, 34 признака. Модели Ridge, Random Forest, HistGradientBoosting.
+Методы PI, SHAP, LIME, PDP, ALE. Метрики: ранговое согласие (Спирмен, Кендалл, top-k),
+recall истинных признаков, знаки, CCC кривых, нулевой эталон из перестановок цели.
+
+1. Теория и литература ([docs/reading.md](docs/reading.md)), методика ([docs/methodology.md](docs/methodology.md)). Сделано.
+2. Исследование реальных данных ([docs/data_exploration.md](docs/data_exploration.md)). Сделано.
+3. E1: синтетика с известной истиной, 5 сценариев × 5 уровней R² ([docs/e1_results.md](docs/e1_results.md)). Сделано.
+4. E2: полусинтетика, реальные признаки и заданная истинная функция ([docs/e2_results.md](docs/e2_results.md)). Сделано.
+5. E3: реальные черты против нулевого эталона, устойчивость, локальное против глобального ([docs/e3_results.md](docs/e3_results.md)). Сделано.
+6. E4: проверка причин расхождений: флаги, LIME, взаимодействия, PI группой, порог ([docs/e4_results.md](docs/e4_results.md)). Сделано.
+7. Сводка для текста и графики ([docs/summary.md](docs/summary.md), `notebooks/10_figures.py`). Сделано.
+8. Текст курсовой.

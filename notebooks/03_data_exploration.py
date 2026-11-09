@@ -14,10 +14,13 @@
 #
 # Запуск целиком: `uv run python notebooks/03_data_exploration.py`.
 # Первый запуск извлекает таблицу (несколько минут), дальше берётся кеш.
+# Тяжёлые таблицы (нелинейные пары, повторная CV, перестановочные тесты) тоже берутся
+# из `results/*.csv`, если они есть. Пересчёт: `EXPLORE_RECOMPUTE=1`.
 
 # %%
 import gc
 import json
+import os
 import re
 import warnings
 from pathlib import Path
@@ -504,14 +507,18 @@ def nonlinear_pair(feature, trait, seed):
             "r2_tree": r2_tree, "r2_linear": r2_lin, "tree_minus_linear": r2_tree - r2_lin}
 
 
-nl = pd.DataFrame(Parallel(n_jobs=N_JOBS)(
-    delayed(nonlinear_pair)(f, t, RANDOM_STATE + i * 7 + j)
-    for i, f in enumerate(NL_FEATURES) for j, t in enumerate(SHORT)
-))
-nl["mi_q"] = multipletests(nl["mi_p"], method="fdr_bh")[1]
-nl = nl.merge(pairs[["feature", "trait", "rho", "q"]], on=["feature", "trait"], how="left")
-nl["nonlinear_candidate"] = (nl["mi_q"] < 0.05) & (nl["q"] >= 0.05)
-nl.round(5).to_csv(RESULTS / "nonlinear_pairs.csv", index=False)
+RECOMPUTE = os.environ.get("EXPLORE_RECOMPUTE") == "1"
+if (RESULTS / "nonlinear_pairs.csv").exists() and not RECOMPUTE:
+    nl = pd.read_csv(RESULTS / "nonlinear_pairs.csv")
+else:
+    nl = pd.DataFrame(Parallel(n_jobs=N_JOBS)(
+        delayed(nonlinear_pair)(f, t, RANDOM_STATE + i * 7 + j)
+        for i, f in enumerate(NL_FEATURES) for j, t in enumerate(SHORT)
+    ))
+    nl["mi_q"] = multipletests(nl["mi_p"], method="fdr_bh")[1]
+    nl = nl.merge(pairs[["feature", "trait", "rho", "q"]], on=["feature", "trait"], how="left")
+    nl["nonlinear_candidate"] = (nl["mi_q"] < 0.05) & (nl["q"] >= 0.05)
+    nl.round(5).to_csv(RESULTS / "nonlinear_pairs.csv", index=False)
 print(f"Пар {len(nl)}; MI значимо (q<0.05): {(nl['mi_q'] < 0.05).sum()}; "
       f"при этом ранговая связь незначима: {nl['nonlinear_candidate'].sum()}")
 print("Дерево лучше линейной модели более чем на 0.005 R²:", int((nl["tree_minus_linear"] > 0.005).sum()))
@@ -733,8 +740,11 @@ def repeated_job(m, s, t):
             "sd_folds": fold.std(), "min_repeat": by_repeat.min(), "max_repeat": by_repeat.max()}
 
 
-cv_table = pd.DataFrame(Parallel(n_jobs=N_JOBS)(delayed(repeated_job)(*j) for j in jobs))
-cv_table.round(4).to_csv(RESULTS / "cv_r2.csv", index=False)
+if (RESULTS / "cv_r2.csv").exists() and not RECOMPUTE:
+    cv_table = pd.read_csv(RESULTS / "cv_r2.csv")
+else:
+    cv_table = pd.DataFrame(Parallel(n_jobs=N_JOBS)(delayed(repeated_job)(*j) for j in jobs))
+    cv_table.round(4).to_csv(RESULTS / "cv_r2.csv", index=False)
 print(cv_table.pivot_table(index=["set", "model"], columns="trait", values="r2")[SHORT].round(3))
 
 
@@ -746,23 +756,26 @@ def perm_job(m, s, t, seed):
     return m, s, t, seed, cv_scores(m, s, np.random.default_rng(seed).permutation(y), cv).mean()
 
 
-# Кандидаты в черту без сигнала дополнительно проверяем без признака пола
-perm_configs = [(m, s, t) for s in ("raw", "clean") for t in SHORT for m in PERMS]
-perm_configs += [(m, "clean_no_demo", t) for t in ("emo", "express") for m in PERMS]
-perm_jobs = [(m, s, t, None) for m, s, t in perm_configs]
-perm_jobs += [(m, s, t, 1000 + i) for m, s, t in perm_configs for i in range(PERMS[m])]
-perm_raw = Parallel(n_jobs=N_JOBS, batch_size=4)(delayed(perm_job)(*j) for j in perm_jobs)
-perm_df = pd.DataFrame(perm_raw, columns=["model", "set", "trait", "seed", "r2"])
-rows = []
-for (m, s, t), g in perm_df.groupby(["model", "set", "trait"]):
-    obs = g.loc[g["seed"].isna(), "r2"].iloc[0]
-    null = g.loc[g["seed"].notna(), "r2"].to_numpy()
-    rows.append({"model": m, "set": s, "trait": t, "r2_obs_single_cv": obs, "null_mean": null.mean(),
-                 "null_p95": np.percentile(null, 95), "n_perm": len(null),
-                 "p": (1 + (null >= obs).sum()) / (len(null) + 1)})
-perm_table = pd.DataFrame(rows)
-perm_table["q"] = multipletests(perm_table["p"], method="fdr_bh")[1]
-perm_table.round(4).to_csv(RESULTS / "permutation_tests.csv", index=False)
+if (RESULTS / "permutation_tests.csv").exists() and not RECOMPUTE:
+    perm_table = pd.read_csv(RESULTS / "permutation_tests.csv")
+else:
+    # Кандидаты в черту без сигнала дополнительно проверяем без признака пола
+    perm_configs = [(m, s, t) for s in ("raw", "clean") for t in SHORT for m in PERMS]
+    perm_configs += [(m, "clean_no_demo", t) for t in ("emo", "express") for m in PERMS]
+    perm_jobs = [(m, s, t, None) for m, s, t in perm_configs]
+    perm_jobs += [(m, s, t, 1000 + i) for m, s, t in perm_configs for i in range(PERMS[m])]
+    perm_raw = Parallel(n_jobs=N_JOBS, batch_size=4)(delayed(perm_job)(*j) for j in perm_jobs)
+    perm_df = pd.DataFrame(perm_raw, columns=["model", "set", "trait", "seed", "r2"])
+    rows = []
+    for (m, s, t), g in perm_df.groupby(["model", "set", "trait"]):
+        obs = g.loc[g["seed"].isna(), "r2"].iloc[0]
+        null = g.loc[g["seed"].notna(), "r2"].to_numpy()
+        rows.append({"model": m, "set": s, "trait": t, "r2_obs_single_cv": obs, "null_mean": null.mean(),
+                     "null_p95": np.percentile(null, 95), "n_perm": len(null),
+                     "p": (1 + (null >= obs).sum()) / (len(null) + 1)})
+    perm_table = pd.DataFrame(rows)
+    perm_table["q"] = multipletests(perm_table["p"], method="fdr_bh")[1]
+    perm_table.round(4).to_csv(RESULTS / "permutation_tests.csv", index=False)
 print(perm_table.sort_values(["trait", "set", "model"]).round(3).to_string())
 
 # %% [markdown]
