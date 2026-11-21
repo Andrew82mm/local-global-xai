@@ -48,6 +48,16 @@ docs/                      литература, исследование дан
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
 Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md).
 
+## Промежуточные отчёты
+
+- [Отчёт 1 — данные и E1](reports/report1_data_e1.pdf), представлен 13 ноября 2026.
+
+Исходники Typst и рисунки для сборки включены в репозиторий.
+
+```bash
+uv run --with typst python reports/build.py
+```
+
 ## Тесты
 
 ```bash
