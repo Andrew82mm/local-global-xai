@@ -12,7 +12,7 @@ import typst
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
-NAMES = sys.argv[1:] or ['report1_data_e1']
+NAMES = sys.argv[1:] or ["report1_data_e1", "report2_e2"]
 
 for name in NAMES:
     src = REPORTS / f"{name}.typ"
