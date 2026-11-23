@@ -3,6 +3,9 @@
 Запуск из корня проекта:
     uv run --with typst python reports/build.py
 
+Для пересчёта рисунков E2 нужны локальный кеш признаков и агрегаты ноутбуков 06 и 07:
+    uv run python notebooks/08_e2_report.py
+    uv run --with typst python reports/build.py report2_e2
 """
 
 import sys

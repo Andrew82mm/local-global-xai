@@ -10,6 +10,7 @@ data/*
 results/figures/*
 !results/figures/.gitkeep
 results/*.csv
+results/e2_fig*/
 
 # IDE / OS
 .idea/
