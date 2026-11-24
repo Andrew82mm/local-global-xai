@@ -172,6 +172,39 @@ def null_pvalues(observed, null):
     return pd.Series((1 + ge) / (1 + len(null)), index=obs.index)
 
 
+def null_tail_pvalues(observed, null, log=True):
+    """p по нормальной аппроксимации нулевого распределения каждого признака.
+
+    Зачем: у эмпирического p разрешение 1/(1 + n_perm), и при 100 перестановках
+    BH по 34 признакам не может отвергнуть одну гипотезу (нужно p ≤ 0.05/34).
+    log=True: нормальное распределение для log важности (положительные меры:
+    mean |SHAP|, размах кривой). log=False: на исходной шкале (PI бывает < 0).
+    p = 1 − Φ((obs − среднее) / SD), односторонний: важность больше нулевой.
+    """
+    obs = pd.Series(observed, dtype=float)
+    null = null.reindex(columns=obs.index).astype(float)
+    if log:
+        floor = np.nanmin(np.where(null > 0, null, np.nan))
+        null, obs = np.log(null.clip(lower=floor)), np.log(obs.clip(lower=floor))
+    z = (obs - null.mean()) / null.std().replace(0, np.nan)
+    return pd.Series(stats.norm.sf(z), index=obs.index)
+
+
+def bh_fdr(pvalues):
+    """q-значения Бенджамини–Хохберга (NaN пропускаются)."""
+    p = pd.Series(pvalues, dtype=float)
+    ok = p.dropna()
+    m = len(ok)
+    if m == 0:
+        return p
+    order = np.argsort(ok.to_numpy())
+    ranked = ok.to_numpy()[order] * m / np.arange(1, m + 1)
+    q = np.minimum.accumulate(ranked[::-1])[::-1].clip(max=1)
+    out = pd.Series(np.nan, index=p.index)
+    out[ok.index[order]] = q
+    return out
+
+
 def null_zscore(observed, null):
     """(важность − среднее нулевых) / SD нулевых: насколько выше шума."""
     obs = pd.Series(observed, dtype=float)

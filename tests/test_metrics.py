@@ -85,3 +85,25 @@ def test_local_global():
     r = M.local_global(local, g, k=1)
     assert np.isclose(r["agg_spearman"], 1) and r["top1_in_global_topk"] == 1
     assert (r["sign_consistency"] == 1).all()
+
+
+def test_bh_fdr_matches_manual():
+    p = pd.Series([0.01, 0.04, 0.03, 0.2, np.nan], index=IDX)
+    q = M.bh_fdr(p)
+    # m = 4: отсортировано 0.01, 0.03, 0.04, 0.2 → 0.04, 0.0533, 0.0533, 0.2
+    assert q["a"] == pytest.approx(0.04)
+    assert q["c"] == pytest.approx(0.04 * 4 / 3)
+    assert q["b"] == pytest.approx(0.04 * 4 / 3)
+    assert q["d"] == pytest.approx(0.2)
+    assert np.isnan(q["e"])
+
+
+def test_null_tail_pvalues_calibrated():
+    rng = np.random.default_rng(0)
+    null = pd.DataFrame(np.exp(rng.normal(0, 1, (200, 5))), columns=IDX)
+    obs = pd.Series(np.exp([0.0, 1.645, 3.0, -1.0, 2.326]), index=IDX)
+    p = M.null_tail_pvalues(obs, null)
+    assert p["a"] == pytest.approx(0.5, abs=0.08)
+    assert p["b"] == pytest.approx(0.05, abs=0.02)
+    assert p["c"] < 0.005
+    assert p["e"] == pytest.approx(0.01, abs=0.007)
