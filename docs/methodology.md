@@ -1,6 +1,6 @@
 # Методика: зафиксированные решения
 
-Код: [src/xai_consistency/](../src/xai_consistency/). Проверка на синтетике: [notebooks/04_framework_check.py](../notebooks/04_framework_check.py).
+Код: [src/xai_consistency/](../src/xai_consistency/). Проверка на синтетике: [notebooks/04_framework_check.ipynb](../notebooks/04_framework_check.ipynb).
 Решения приняты до экспериментов E1–E4 и по результатам на реальных данных не меняются. Если что-то придётся поменять, изменение записывается здесь с причиной.
 
 ## 1. Что именно объясняем

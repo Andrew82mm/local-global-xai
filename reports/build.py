@@ -4,7 +4,7 @@
     uv run --with typst python reports/build.py
 
 Для пересчёта рисунков E2 нужны локальный кеш признаков и агрегаты ноутбуков 06 и 07:
-    uv run python notebooks/08_e2_report.py
+    uv run jupyter nbconvert --to notebook --execute --stdout --ExecutePreprocessor.timeout=-1 notebooks/08_e2_report.ipynb > /dev/null
     uv run --with typst python reports/build.py report2_e2
 """
 

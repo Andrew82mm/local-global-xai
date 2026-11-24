@@ -14,25 +14,24 @@ uv sync
 
 ## Запуск
 
-Ноутбуки хранятся как `.py`-файлы с ячейками `# %%`. В VS Code их можно
-запускать по ячейкам (Run Cell), как в Jupyter. Также можно запустить файл целиком:
+Запустите JupyterLab из корня проекта и откройте нужный файл `.ipynb` в папке `notebooks/`.
 
 ```bash
-uv run python notebooks/01_first_look.py
+uv run jupyter lab
 ```
 
 ## Структура
 
 ```
 notebooks/                 эксперименты, по порядку
-  01_first_look.py           все пять методов на California Housing
-  02_interaction_toy.py      пример расхождения из-за взаимодействия признаков
-  03_data_exploration.py     исследование реальных данных
-  04_framework_check.py      проверка общего кода на синтетике, время методов
-  05_hgb_interaction.py      разбор: почему PI видит x1·x2 у бустинга, а SHAP нет
-  06_e1_synthetic.py         E1: синтетика при разном уровне сигнала
-  07_e2_semisynthetic.py     E2: полусинтетика на реальных признаках
-  08_e2_report.py           рисунки отчёта E2 и аддитивный контроль
+  01_first_look.ipynb          все пять методов на California Housing
+  02_interaction_toy.ipynb     пример расхождения из-за взаимодействия признаков
+  03_data_exploration.ipynb    исследование реальных данных
+  04_framework_check.ipynb     проверка общего кода на синтетике, время методов
+  05_hgb_interaction.ipynb     разбор: почему PI видит x1·x2 у бустинга, а SHAP нет
+  06_e1_synthetic.ipynb        E1: синтетика при разном уровне сигнала
+  07_e2_semisynthetic.ipynb    E2: полусинтетика на реальных признаках
+  08_e2_report.ipynb           рисунки отчёта E2 и аддитивный контроль
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
@@ -65,7 +64,7 @@ uv run --with typst python reports/build.py
 Затем запустите ноутбук 08 и сборку отчёта E2.
 
 ```bash
-uv run python notebooks/08_e2_report.py
+uv run jupyter nbconvert --to notebook --execute --stdout --ExecutePreprocessor.timeout=-1 notebooks/08_e2_report.ipynb > /dev/null
 uv run --with typst python reports/build.py report2_e2
 ```
 

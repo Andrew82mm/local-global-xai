@@ -1,6 +1,6 @@
 """Реальные данные: загрузка очищенной таблицы из кеша и построение 34 признаков.
 
-Источник: `data/exploration_table.csv.gz`, его создаёт `notebooks/03_data_exploration.py`.
+Источник: `data/exploration_table.csv.gz`, его создаёт `notebooks/03_data_exploration.ipynb`.
 Сырой `data/dataset_1000.jsonl` здесь не читается.
 
 Персональные данные: функции возвращают таблицы с данными людей. Выводить на экран
@@ -52,7 +52,7 @@ FORBIDDEN = {"completion_date", "g_admin_share", "person", "vk_id_rank"}
 def load_table(path=CACHE_PATH):
     """Читает кеш и переименовывает цели в короткие имена (extra, emo, ...)."""
     if not Path(path).exists():
-        raise FileNotFoundError(f"Нет кеша {path}: сначала запустите notebooks/03_data_exploration.py")
+        raise FileNotFoundError(f"Нет кеша {path}: сначала запустите notebooks/03_data_exploration.ipynb")
     return pd.read_csv(path).rename(columns=TARGETS)
 
 

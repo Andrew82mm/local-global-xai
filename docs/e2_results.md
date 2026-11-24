@@ -1,6 +1,6 @@
 # E2: полусинтетика на реальных признаках
 
-Код: [notebooks/07_e2_semisynthetic.py](../notebooks/07_e2_semisynthetic.py), истинная функция в [src/xai_consistency/semisynthetic.py](../src/xai_consistency/semisynthetic.py).
+Код: [notebooks/07_e2_semisynthetic.ipynb](../notebooks/07_e2_semisynthetic.ipynb), истинная функция в [src/xai_consistency/semisynthetic.py](../src/xai_consistency/semisynthetic.py).
 Настройки методов и метрики те же, что в E1 ([methodology.md](methodology.md), [e1_results.md](e1_results.md)).
 
 **Цель.** Проверить, переносятся ли выводы E1 на реальную структуру признаков (корреляции, скошенность, бинарные флаги, выбросы), когда правильный ответ по-прежнему задан нами.
@@ -144,7 +144,7 @@ R² на тесте: 0.14–0.15 при R² = 0.2, 0.02–0.05 при 0.08, от
 
 ### Иллюстративные графики для отчёта
 
-Отдельный ноутбук [08_e2_report.py](../notebooks/08_e2_report.py) строит рисунки для отчёта:
+Отдельный ноутбук [08_e2_report.ipynb](../notebooks/08_e2_report.ipynb) строит рисунки для отчёта:
 
 - `fig11_e2_importance` — PI по трём моделям при R² = 0.2. Видно, что друзья и лайки — главные признаки, у Ridge часть вклада уходит двойнику `can_see_audio`, а шумовые признаки тоже получают небольшой вес.
 - `fig12_e2_curves` — PDP и ALE прогноза HGB и заданные отдельные эффекты для friends, likes и audios.

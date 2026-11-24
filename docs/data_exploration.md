@@ -1,7 +1,7 @@
 # Исследование датасета: признаки VK и психологические черты
 
 Данные: `data/dataset_1000.jsonl`, 1000 человек, тест 2022–2024 годов, профили собраны примерно в июне 2026 года.
-Код: [notebooks/03_data_exploration.py](../notebooks/03_data_exploration.py). Здесь только агрегаты.
+Код: [notebooks/03_data_exploration.ipynb](../notebooks/03_data_exploration.ipynb). Здесь только агрегаты.
 
 Короткие имена черт: `extra` — экстраверсия–интроверсия, `attach` — привязанность–обособленность, `control` — самоконтроль–импульсивность, `emo` — эмоциональная устойчивость–неустойчивость, `express` — экспрессивность–практичность.
 
@@ -295,7 +295,7 @@
 ## Как воспроизвести
 
 ```bash
-uv run python notebooks/03_data_exploration.py
+uv run jupyter nbconvert --to notebook --execute --stdout --ExecutePreprocessor.timeout=-1 notebooks/03_data_exploration.ipynb > /dev/null
 ```
 
 Около 7 минут. Промежуточная таблица сохраняется в `data/exploration_table.csv.gz`, агрегаты — в `results/*.csv`. Оба пути не попадают в git.
