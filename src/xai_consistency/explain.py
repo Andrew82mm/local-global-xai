@@ -356,12 +356,13 @@ class ModelExplanations:
 def fit_and_explain(model_name, X_train, y_train, X_test, y_test, log_cols=(), other_cols=None,
                     indicator_cols=(), curve_features=None, methods=ALL_METHODS, n_explain=200,
                     n_background=100, n_bins=N_BINS, pi_repeats=10, lime_samples=5000,
-                    lime_kernel_factor=0.75, seed=0):
+                    lime_kernel_factor=0.75, seed=0, splits=("train", "test")):
     """Обучает Pipeline и считает объяснения.
 
     Где считаем (docs/methodology.md, раздел 6):
     - PI, PDP, ALE — на тесте;
     - SHAP и LIME — отдельно на обучении и на тесте (до n_explain объектов в каждой части).
+      splits ограничивает части; выборка объектов и фон от него не зависят.
     Сетка для кривых строится по квантилям теста и общая для PDP, ALE и SHAP.
     """
     if other_cols is None:
@@ -390,7 +391,7 @@ def fit_and_explain(model_name, X_train, y_train, X_test, y_test, log_cols=(), o
         out[("pdp", "test")] = partial_dependence(model, Z_test, grids)
     if "ale" in methods:
         out[("ale", "test")] = accumulated_local_effects(model, Z_test, grids)
-    for split in ("train", "test"):
+    for split in splits:
         if "shap" in methods:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
