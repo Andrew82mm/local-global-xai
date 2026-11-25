@@ -32,6 +32,7 @@ notebooks/                 эксперименты, по порядку
   06_e1_synthetic.ipynb        E1: синтетика при разном уровне сигнала
   07_e2_semisynthetic.ipynb    E2: полусинтетика на реальных признаках
   08_e2_report.ipynb           рисунки отчёта E2 и аддитивный контроль
+  09_e3_real.ipynb             E3: реальные черты, перестановки и устойчивость
 src/xai_consistency/       общий код
   data.py                    кеш реальных данных и 34 признака
   synthetic.py               синтетика с известной истиной
@@ -41,12 +42,26 @@ src/xai_consistency/       общий код
   metrics.py                 метрики согласованности
 tests/                     тесты генераторов, метрик и методов
 data/                      локальные данные (не в git)
-results/                   таблицы и графики (не в git)
+results/                   локальные таблицы и графики, выбранные PNG в git
 docs/                      литература, исследование данных, методика
 ```
 
 Решения о настройках методов: [docs/methodology.md](docs/methodology.md).
 Результаты E1: [docs/e1_results.md](docs/e1_results.md), E2: [docs/e2_results.md](docs/e2_results.md).
+Таблицы и графики E3 строит [ноутбук 09](notebooks/09_e3_real.ipynb).
+
+## Воспроизведение E3
+
+Подготовьте локальный кеш признаков `data/exploration_table.csv.gz` ноутбуком 03.
+Ноутбук 09 использует сохранённые агрегаты `results/e3_*.csv`, а недостающие
+прогоны рассчитывает. Графики сохраняются в `results/figures/`.
+
+```bash
+uv run jupyter nbconvert --to notebook --execute --stdout --ExecutePreprocessor.timeout=-1 notebooks/09_e3_real.ipynb > /dev/null
+```
+
+Для проверки с сокращённым числом прогонов добавьте `E3_SMOKE=1` перед командой.
+Для полного пересчёта задайте `E3_RECOMPUTE=1`.
 
 ## Промежуточные отчёты
 
